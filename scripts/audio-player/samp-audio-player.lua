@@ -1198,6 +1198,41 @@ end
 
 APUI.applyStyle()
 
+-- Мини-режим может висеть на экране без курсора, пока игрок ездит и играет: тогда окно не ловит мышь,
+-- а кнопки «Полное окно» и «Закрыть» спрятаны. apMiniCursor - курсор, включённый клавишей окна.
+apMiniCursor = true
+local apPinnedHintShown = false
+
+function apIsMini()
+	return data ~= nil and (data.window.mini == true or data.window.mini == 'true')
+end
+
+-- Можно ли сейчас нажимать кнопки мини-плеера: свой курсор или курсор SA-MP (диалог, другой скрипт).
+function apCursorOn()
+	if not apIsMini() or apMiniCursor then return true end
+	local ok, active = pcall(sampIsCursorActive)
+	return ok and active == true
+end
+
+local function apPinCursorOff()
+	apMiniCursor = false
+	if not apPinnedHintShown then
+		apPinnedHintShown = true
+		local key = tonumber(data.window.key) or 0
+		APUI.notify('Плеер остаётся на экране.\nКнопки: ' .. (key ~= 0 and (apKeyName(key) .. ' или ') or '') .. '/aplayer.', 5)
+	end
+end
+
+-- Клавиша окна и /aplayer: открыть или закрыть окно; у открытого мини-плеера - включить или убрать курсор.
+function apHotkey()
+	if apWindow.v and apIsMini() then
+		if apMiniCursor then apPinCursorOff() else apMiniCursor = true end
+	else
+		apWindow.v = not apWindow.v
+		apMiniCursor = true
+	end
+end
+
 function onWindowMessage(msg, wparam, lparam)
 	if msg ~= 0x100 then return end -- WM_KEYDOWN
 	if apKeyCapture then
@@ -1217,16 +1252,18 @@ function onWindowMessage(msg, wparam, lparam)
 			return
 		end
 	end
-	if wparam == VK_ESCAPE and apWindow.v and not isPauseMenuActive() and not sampIsChatInputActive() and not sampIsDialogActive() then
+	-- Esc закрывает окно; у мини-плеера только убирает курсор (полоска остаётся). Без курсора Esc - игре.
+	if wparam == VK_ESCAPE and apWindow.v and (not apIsMini() or apMiniCursor)
+		and not isPauseMenuActive() and not sampIsChatInputActive() and not sampIsDialogActive() then
 		consumeWindowMessage(true, false)
-		apWindow.v = false
+		if apIsMini() then apPinCursorOff() else apWindow.v = false end
 		return
 	end
 	local key = tonumber(data and data.window and data.window.key) or 0
 	local repeated = math.floor(lparam / 0x40000000) % 2 == 1 -- бит 30: клавиша уже была нажата (автоповтор)
 	if key ~= 0 and wparam == key and not repeated and not (apWindow.v and imgui.GetIO().WantTextInput)
 		and not sampIsChatInputActive() and not sampIsDialogActive() and not isPauseMenuActive() then
-		apWindow.v = not apWindow.v
+		apHotkey()
 	end
 end
 
@@ -1276,7 +1313,7 @@ function main()
 	apLoadFavorites()
 	apLoadFolderQuiet()
 	sampRegisterChatCommand('aplayer', function()
-		apWindow.v = not apWindow.v
+		apHotkey()
 	end)
 	local key = tonumber(data.window.key) or 0
 	sampAddChatMessage('Audio Player | {FFFFFF}Аудиоплеер загружен. Окно: /aplayer' .. (key ~= 0 and (' или клавиша ' .. apKeyName(key)) or '') .. '.', 0xC0C0C0)
@@ -1301,7 +1338,7 @@ function main()
 			end
 		end
 		imgui.Process = apWindow.v or APUI.toastsActive()
-		imgui.ShowCursor = apWindow.v
+		imgui.ShowCursor = apWindow.v and (not apIsMini() or apMiniCursor)
 		if wasOpen and not apWindow.v then
 			apKeyCapture = false
 			apSaveWindowPos()
@@ -1729,6 +1766,7 @@ local function apHeaderButtons(x0, width, mini)
 	end
 	if APUI.button(modeIcon .. '##apmode') then
 		data.window.mini = not mini
+		apMiniCursor = true
 		inicfg.save(data, cfgpath)
 	end
 	imgui.Hint(u8(mini and 'Полное окно' or 'Мини-режим'))
@@ -1789,7 +1827,10 @@ local function apDrawMini(x0, width)
 	local rowH = math.max(small, textH)
 	local art = small
 	local expandIcon, closeIcon = fa.ICON_FA_EXPAND, fa.ICON_FA_TIMES
-	local buttonsW = small * 3 + APUI.buttonWidth(expandIcon) + APUI.buttonWidth(closeIcon) + gap * 4
+	-- Без курсора кнопки «Полное окно» и «Закрыть» не нужны: их место отдаётся названию.
+	local withBox = apCursorOn()
+	local buttonsW = small * 3 + gap * 2
+	if withBox then buttonsW = buttonsW + APUI.buttonWidth(expandIcon) + APUI.buttonWidth(closeIcon) + gap * 2 end
 	local textW = width - art - gap - buttonsW - gap
 	local drawList = imgui.GetWindowDrawList()
 	-- Обложка.
@@ -1819,6 +1860,7 @@ local function apDrawMini(x0, width)
 	imgui.SameLine()
 	if apRoundButton('mnext', fa.ICON_FA_STEP_FORWARD, small, nil, rowH) then apStep(1) end
 	imgui.Hint(u8(tracks and 'Следующий трек' or 'Следующая станция'))
+	if not withBox then return end
 	imgui.SameLine()
 	if apBoxButton('mexpand', expandIcon, rowH) then
 		data.window.mini = false
@@ -1850,8 +1892,13 @@ function imgui.OnDrawFrame()
 	if APUI.fontBase then imgui.PushFont(APUI.fontBase) end
 	imgui.PushStyleVar(imgui.StyleVar.Alpha, math.max(0.02, 1 - t * t * t))
 	imgui.PushStyleVar(imgui.StyleVar.WindowPadding, imgui.ImVec2(padX, padY))
-	imgui.Begin('##sampaudioplayer', apWindow, imgui.WindowFlags.NoResize + imgui.WindowFlags.NoCollapse + imgui.WindowFlags.NoTitleBar
-		+ imgui.WindowFlags.NoScrollbar + imgui.WindowFlags.AlwaysAutoResize)
+	local flags = imgui.WindowFlags.NoResize + imgui.WindowFlags.NoCollapse + imgui.WindowFlags.NoTitleBar
+		+ imgui.WindowFlags.NoScrollbar + imgui.WindowFlags.AlwaysAutoResize
+	-- Мини-плеер без курсора висит поверх игры: мышь и фокус не забирает, перетащить нельзя.
+	if mini and not apCursorOn() then
+		flags = flags + imgui.WindowFlags.NoInputs + imgui.WindowFlags.NoMove + imgui.WindowFlags.NoFocusOnAppearing
+	end
+	imgui.Begin('##sampaudioplayer', apWindow, flags)
 		-- Внутри окна обычный отступ, чтобы отступ окна не достался подсказкам и панелям.
 		imgui.PushStyleVar(imgui.StyleVar.WindowPadding, imgui.ImVec2(12, 12))
 		local pos = imgui.GetWindowPos()
