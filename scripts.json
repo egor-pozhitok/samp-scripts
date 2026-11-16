@@ -1,16 +1,19 @@
 {
   "format": 1,
+  "servers": [
+    { "id": "galaxy", "name": "Galaxy" }
+  ],
   "scripts": [
     {
       "id": "audio-player",
       "name": "Аудиоплеер",
       "description": "Радио и музыка из папки на компьютере: «Сейчас играет», поиск, избранные станции, мини-плеер поверх игры, каталог скриптов. Станция подключается в фоне, игра не замирает. Окно: /aplayer или F12.",
-      "version": "1.4",
-      "version_num": 5,
+      "version": "1.5",
+      "version_num": 6,
       "image": "images/audio-player.png",
       "main": "samp-audio-player.lua",
       "files": [
-        { "path": "samp-audio-player.lua", "size": 71214, "src": "scripts/audio-player/samp-audio-player.lua" }
+        { "path": "samp-audio-player.lua", "size": 71415, "src": "scripts/audio-player/samp-audio-player.lua" }
       ],
       "deps": [
         { "path": "lib/imgui.lua", "size": 114068, "src": "deps/lib/imgui.lua" },
@@ -31,9 +34,27 @@
         { "path": "lib/samp/events/handlers.lua", "size": 17405, "src": "deps/lib/samp/events/handlers.lua" },
         { "path": "lib/samp/events/utils.lua", "size": 1385, "src": "deps/lib/samp/events/utils.lua" },
         { "path": "resource/fonts/fa-solid-900.ttf", "size": 202744, "src": "deps/resource/fonts/fa-solid-900.ttf" },
-        { "path": "lib/samp-catalog.lua", "size": 22568, "src": "deps/lib/samp-catalog.lua" },
+        { "path": "lib/samp-catalog.lua", "size": 27591, "src": "deps/lib/samp-catalog.lua" },
         { "path": "lib/samp-toast.lua", "size": 1407, "src": "deps/lib/samp-toast.lua" },
         { "path": "samp-notifier.lua", "size": 6116, "src": "deps/samp-notifier.lua" }
+      ]
+    },
+    {
+      "id": "snhelper",
+      "name": "SNHelper",
+      "description": "Помощник для работы в эфире на сервере Galaxy: мероприятия, правила, счётчики, подсказки. Обновляется сам.",
+      "version": "1.1",
+      "version_num": 3,
+      "server": "galaxy",
+      "updates": "self",
+      "image": "images/snhelper.png",
+      "main": "SNHelper.luac",
+      "also": ["SNHelper.lua"],
+      "files": [
+        { "path": "SNHelper.luac", "size": 1222482, "src": "scripts/snhelper/SNHelper.luac" }
+      ],
+      "deps": [
+        { "path": "imgui_notf.lua", "size": 6708, "src": "deps/imgui_notf.lua" }
       ]
     }
   ]

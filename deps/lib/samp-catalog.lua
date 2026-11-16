@@ -1,7 +1,7 @@
 -- samp-catalog: каталог скриптов GORYCH для MoonLoader
 local M = {}
 
-M.VERSION = 1
+M.VERSION = 2
 M.REPO = 'https://raw.githubusercontent.com/egor-pozhitok/samp-scripts/main/'
 M.STATE_FILE = 'config/SNHelper/catalog.state'
 M.IMAGE_DIR = 'resource/SNHelper/catalog'
@@ -52,20 +52,49 @@ local function fileList(list, check)
 	return out
 end
 
+local ID_PATTERN = '^[a-z0-9][a-z0-9_%-]*$'
+
+local function isMainName(name)
+	return M.safePath(name) and not name:find('/', 1, true) and (name:lower():match('%.lua$') or name:lower():match('%.luac$')) and true or false
+end
+
+local function alwaysProtected(key)
+	for _, p in ipairs(M.ALWAYS_PROTECTED) do
+		if M.normPath(p) == key then return true end
+	end
+	return false
+end
+
 local function parseEntry(e, selfSet, shared, ownKey)
 	if type(e) ~= 'table' then return nil end
-	if type(e.id) ~= 'string' or #e.id > 40 or not e.id:match('^[a-z0-9][a-z0-9_%-]*$') then return nil end
+	if type(e.id) ~= 'string' or #e.id > 40 or not e.id:match(ID_PATTERN) then return nil end
 	if type(e.name) ~= 'string' or e.name:match('^%s*$') or #e.name > 100 then return nil end
 	if e.description ~= nil and type(e.description) ~= 'string' then return nil end
 	if type(e.version) ~= 'string' or e.version == '' or #e.version > 20 then return nil end
 	local num = tonumber(e.version_num)
 	if not num or num < 0 or num ~= math.floor(num) then return nil end
 	if e.image ~= nil and (not M.safePath(e.image) or not e.image:lower():match('%.png$')) then return nil end
-	if not M.safePath(e.main) or e.main:find('/', 1, true) or not (e.main:lower():match('%.lua$') or e.main:lower():match('%.luac$')) then return nil end
+	if not isMainName(e.main) then return nil end
 	local mainKey = M.normPath(e.main)
-	if selfSet[mainKey] or shared[mainKey] then return nil end
+	local selfUpdating = e.updates == 'self'
+	local also = {}
+	if e.also ~= nil then
+		if type(e.also) ~= 'table' or #e.also > 4 then return nil end
+		for _, name in ipairs(e.also) do
+			if type(name) ~= 'string' or not isMainName(name) or M.normPath(name) == mainKey then return nil end
+			also[#also + 1] = name
+		end
+	end
+	local protectedMain = selfSet[mainKey] or shared[mainKey]
+	if protectedMain then
+		if not (selfUpdating and alwaysProtected(mainKey) and not shared[mainKey]) then return nil end
+		if type(e.files) ~= 'table' or #e.files ~= 1 then return nil end
+	end
 	local foreign = ownKey and mainKey ~= ownKey and ownKey or nil
-	local files = fileList(e.files, function(key) return not selfSet[key] and not shared[key] and key ~= foreign end)
+	local files = fileList(e.files, function(key)
+		if protectedMain and key == mainKey then return true end
+		return not selfSet[key] and not shared[key] and key ~= foreign
+	end)
 	if not files then return nil end
 	local own, hasMain = {}, false
 	for _, f in ipairs(files) do
@@ -76,10 +105,56 @@ local function parseEntry(e, selfSet, shared, ownKey)
 	if not hasMain then return nil end
 	local deps = fileList(e.deps, function(key) return not selfSet[key] and not own[key] and key ~= foreign end)
 	if not deps then return nil end
+	local server = type(e.server) == 'string' and #e.server <= 40 and e.server:match(ID_PATTERN) and e.server or nil
 	return {
 		id = e.id, name = e.name, description = e.description or '', version = e.version, version_num = num,
 		image = e.image, main = e.main, files = files, deps = deps,
+		server = server, selfUpdating = selfUpdating, also = also,
 	}
+end
+
+function M.parseServers(info)
+	local out, seen = {}, {}
+	if type(info) ~= 'table' or type(info.servers) ~= 'table' then return out end
+	for _, s in ipairs(info.servers) do
+		if type(s) == 'table' and type(s.id) == 'string' and #s.id <= 40 and s.id:match(ID_PATTERN)
+			and type(s.name) == 'string' and not s.name:match('^%s*$') and #s.name <= 60 and not seen[s.id] then
+			seen[s.id] = true
+			out[#out + 1] = { id = s.id, name = s.name }
+		end
+	end
+	return out
+end
+
+function M.tabs(list, servers)
+	local count, anyCount, order = {}, 0, {}
+	for _, e in ipairs(list) do
+		if e.server then
+			if not count[e.server] then order[#order + 1] = e.server end
+			count[e.server] = (count[e.server] or 0) + 1
+		else
+			anyCount = anyCount + 1
+		end
+	end
+	local tabs, used = { { id = 'all' } }, {}
+	for _, s in ipairs(servers or {}) do
+		if count[s.id] then
+			tabs[#tabs + 1] = { id = s.id, name = s.name }
+			used[s.id] = true
+		end
+	end
+	for _, id in ipairs(order) do
+		if not used[id] then tabs[#tabs + 1] = { id = id, name = id } end
+	end
+	if anyCount > 0 then tabs[#tabs + 1] = { id = 'any' } end
+	if #tabs <= 2 then return nil end
+	return tabs
+end
+
+function M.inTab(entry, tabId)
+	if tabId == nil or tabId == 'all' then return true end
+	if tabId == 'any' then return entry.server == nil end
+	return entry.server == tabId
 end
 
 function M.parse(info, selfSet, shared, ownKey)
@@ -101,6 +176,7 @@ end
 
 function M.action(entry, installed)
 	if installed == nil then return 'install' end
+	if entry.selfUpdating then return 'managed' end
 	if entry.version_num > installed then return 'update' end
 	return 'remove'
 end
@@ -180,6 +256,7 @@ function M.helpLines(selfName, extra)
 		'«Обновить» появляется, когда вышла новая версия: файлы заменяются, скрипт перезапускается.'
 			.. (selfName and (' Так же обновляется и сам ' .. selfName .. ' (карточка «этот скрипт»).') or ''),
 		'«Удалить» (нажмите два раза) останавливает скрипт и удаляет его файлы. Общие библиотеки остаются: ими пользуются другие скрипты.',
+		'Скрипт с подписью «обновляется сам» (SNHelper) здесь только устанавливается: обновления он ставит себе сам.',
 	}
 	for _, line in ipairs(extra or {}) do lines[#lines + 1] = line end
 	for i, line in ipairs(lines) do lines[i] = i .. '. ' .. line end
@@ -201,7 +278,15 @@ function M.new(opts)
 	self.busy, self.busyKind, self.progress = nil, nil, nil
 	self.installed, self.images, self.textures = {}, {}, {}
 	self.checkedAt = 0
+	self.servers = {}
+	self.tab = nil
 	return self
+end
+
+local function mainNames(entry)
+	local names = { entry.main }
+	for _, n in ipairs(entry.also or {}) do names[#names + 1] = n end
+	return names
 end
 
 local function full(path)
@@ -269,7 +354,19 @@ function Catalog:ownName()
 end
 
 function Catalog:isSelf(entry)
-	return self.opts.selfName and M.normPath(entry.main) == self:ownName() or false
+	if not self.opts.selfName then return false end
+	local own = self:ownName()
+	for _, n in ipairs(mainNames(entry)) do
+		if M.normPath(n) == own then return true end
+	end
+	return false
+end
+
+local function anyMainExists(entry)
+	for _, n in ipairs(mainNames(entry)) do
+		if doesFileExist(full(n)) then return true end
+	end
+	return false
 end
 
 function Catalog:runningVersion()
@@ -299,7 +396,7 @@ function Catalog:refreshInstalled()
 	local state = self:readState()
 	local installed = {}
 	for _, entry in ipairs(self.list) do
-		if doesFileExist(full(entry.main)) then installed[entry.id] = state[entry.id] or 0 end
+		if anyMainExists(entry) then installed[entry.id] = state[entry.id] or 0 end
 	end
 	self.installed = installed
 	self.checkedAt = os.clock()
@@ -335,6 +432,7 @@ function Catalog:fetchList()
 	local okJson, info = pcall(decodeJson, text)
 	if not okJson or type(info) ~= 'table' then return nil, 'каталог повреждён' end
 	local selfSet, shared = self:sets()
+	self.pendingServers = M.parseServers(info)
 	return M.parse(info, selfSet, shared, self:ownName())
 end
 
@@ -348,6 +446,7 @@ function Catalog:fetch(event)
 		local ok, list, extra = pcall(self.fetchList, self)
 		if ok and list then
 			self.list, self.skipped, self.err = list, extra or 0, nil
+			self.servers = self.pendingServers or {}
 			self.status = M.nextStatus(self.status, 'loaded', #list)
 			self:refreshInstalled()
 			local okImg, errImg = pcall(self.fetchImages, self)
@@ -397,6 +496,7 @@ function Catalog:fetchFiles(entry)
 end
 
 function Catalog:install(entry)
+	if entry.selfUpdating and anyMainExists(entry) then return false, 'он уже установлен' end
 	local ok, err = self:fetchFiles(entry)
 	if not ok then return false, err end
 	self:setState(entry.id, entry.version_num)
@@ -422,6 +522,7 @@ function Catalog:updateSelf(entry)
 end
 
 function Catalog:remove(entry)
+	if entry.selfUpdating then return false end
 	local running = findRunning(full(entry.main))
 	if running then
 		pcall(running.unload, running)
@@ -450,6 +551,14 @@ function Catalog:run(entry, kind)
 				notify('Скрипт ' .. name .. ' удалён.', 4, 'success')
 			else
 				notify('Не удалось удалить скрипт ' .. name .. '.\nУдалите файл moonloader/' .. entry.main .. ' вручную.', 6, 'error')
+			end
+		elseif kind == 'self' and entry.selfUpdating then
+			local fn = self.opts.selfUpdate
+			local ok, done = false, nil
+			if fn then ok, done = pcall(fn, entry) end
+			if fn and not ok then self:log(done) end
+			if not (ok and done) then
+				notify('Не удалось обновить ' .. self.opts.selfName .. '.\nПопробуйте позже.', 6, 'error')
 			end
 		elseif kind == 'self' then
 			local ok, done, extra = pcall(self.updateSelf, self, entry)
@@ -533,6 +642,8 @@ function Catalog:drawCard(entry, width)
 		label = self.busyKind == 'remove' and u8('Удаление...') or (p and p.total > 0 and u8('Загрузка ' .. p.done .. ' из ' .. p.total)) or u8('Загрузка...')
 	elseif action == 'self' then
 		label = u8('этот скрипт')
+	elseif action == 'managed' then
+		label = u8('обновляется сам')
 	elseif action == 'install' then
 		label = fa.ICON_FA_DOWNLOAD .. u8(' Установить')
 	elseif action == 'update' then
@@ -541,7 +652,7 @@ function Catalog:drawCard(entry, width)
 		label = fa.ICON_FA_TRASH .. u8(' Удалить')
 	end
 	local buttonWidth
-	if action == 'self' and not mine then
+	if (action == 'self' or action == 'managed') and not mine then
 		buttonWidth = imgui.CalcTextSize(label).x
 	elseif action == 'remove' and not mine then
 		buttonWidth = ui.dangerButtonWidth(label)
@@ -579,6 +690,8 @@ function Catalog:drawCard(entry, width)
 					ui.button(label .. '##' .. id .. 'Busy' .. entry.id, nil, V2(buttonWidth, 0))
 				elseif action == 'self' then
 					ui.label(label, C.accent)
+				elseif action == 'managed' then
+					ui.label(label, C.muted)
 				elseif action == 'remove' then
 					if ui.dangerButton(id .. entry.id, label, V2(buttonWidth, 0)) then self:run(entry, 'remove') end
 				elseif ui.button(label .. '##' .. id .. entry.id, 'primary', V2(buttonWidth, 0)) then
@@ -596,6 +709,45 @@ function Catalog:drawCard(entry, width)
 	imgui.PopStyleColor()
 end
 
+function Catalog:currentTab(tabs)
+	if self.tab == nil and self.opts.tabGet then
+		local ok, saved = pcall(self.opts.tabGet)
+		self.tab = ok and type(saved) == 'string' and saved or 'all'
+	end
+	for _, t in ipairs(tabs) do
+		if t.id == self.tab then return t.id end
+	end
+	return 'all'
+end
+
+function Catalog:setTab(id)
+	if id == self.tab then return end
+	self.tab = id
+	if self.opts.tabSet then pcall(self.opts.tabSet, id) end
+end
+
+function Catalog:drawTabs(tabs, current, inner)
+	local imgui = self:libs()
+	local ui, u8 = self.opts.ui, self.opts.u8
+	local gap = imgui.GetStyle().ItemSpacing.x
+	local x = 0
+	for i, t in ipairs(tabs) do
+		local name = t.id == 'all' and u8('Все') or t.id == 'any' and u8('Любой сервер') or t.name
+		local label = name .. '##' .. self.idPrefix .. 'Tab' .. t.id
+		local w = ui.buttonWidth(name)
+		if i > 1 then
+			if x + gap + w <= inner then
+				imgui.SameLine(0, gap)
+				x = x + gap
+			else
+				x = 0
+			end
+		end
+		if ui.button(label, t.id == current and 'primary' or nil, imgui.ImVec2(w, 0)) then self:setTab(t.id) end
+		x = x + w
+	end
+end
+
 function Catalog:drawBody(inner)
 	local imgui, fa = self:libs()
 	local ui, u8 = self.opts.ui, self.opts.u8
@@ -603,10 +755,16 @@ function Catalog:drawBody(inner)
 	local id = self.idPrefix
 	local status = self.status
 	local refreshLabel = fa.ICON_FA_SYNC .. u8(' Обновить список')
+	local tabs = status == 'ready' and M.tabs(self.list, self.servers) or nil
+	local current = tabs and self:currentTab(tabs) or 'all'
+	local visible = {}
+	for _, entry in ipairs(self.list) do
+		if M.inTab(entry, current) then visible[#visible + 1] = entry end
+	end
 	if status == 'loading' then
 		ui.label(u8('Загрузка списка...'), C.muted)
 	elseif status == 'ready' then
-		ui.label(u8('Скриптов: ' .. #self.list), C.muted)
+		ui.label(u8('Скриптов: ' .. #visible), C.muted)
 	else
 		ui.label(u8('Скрипты от GORYCH'), C.muted)
 	end
@@ -633,7 +791,8 @@ function Catalog:drawBody(inner)
 	elseif status == 'empty' then
 		imgui.TextDisabled(u8('В каталоге пока нет скриптов.'))
 	elseif status == 'ready' then
-		for _, entry in ipairs(self.list) do self:drawCard(entry, inner) end
+		if tabs then self:drawTabs(tabs, current, inner) end
+		for _, entry in ipairs(visible) do self:drawCard(entry, inner) end
 	end
 	if (status == 'ready' or status == 'empty') and self.skipped > 0 then
 		imgui.PushTextWrapPos(0)
