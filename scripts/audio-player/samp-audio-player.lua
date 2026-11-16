@@ -27,7 +27,7 @@ APBoot.DEPS = {
 	{ path = 'resource/fonts/fa-solid-900.ttf', size = 202744 },
 }
 
-APBoot.CATALOG_DEP = { path = 'lib/samp-catalog.lua', size = 27591, module = 'samp-catalog', optional = true, minVersion = 2 }
+APBoot.CATALOG_DEP = { path = 'lib/samp-catalog.lua', size = 32110, module = 'samp-catalog', optional = true, minVersion = 2 }
 table.insert(APBoot.DEPS, APBoot.CATALOG_DEP)
 
 APBoot.TOAST_DEP = { path = 'lib/samp-toast.lua', size = 1407, module = 'samp-toast', optional = true, minVersion = 1 }

@@ -34,7 +34,7 @@
         { "path": "lib/samp/events/handlers.lua", "size": 17405, "src": "deps/lib/samp/events/handlers.lua" },
         { "path": "lib/samp/events/utils.lua", "size": 1385, "src": "deps/lib/samp/events/utils.lua" },
         { "path": "resource/fonts/fa-solid-900.ttf", "size": 202744, "src": "deps/resource/fonts/fa-solid-900.ttf" },
-        { "path": "lib/samp-catalog.lua", "size": 27591, "src": "deps/lib/samp-catalog.lua" },
+        { "path": "lib/samp-catalog.lua", "size": 32110, "src": "deps/lib/samp-catalog.lua" },
         { "path": "lib/samp-toast.lua", "size": 1407, "src": "deps/lib/samp-toast.lua" },
         { "path": "samp-notifier.lua", "size": 6116, "src": "deps/samp-notifier.lua" }
       ]
@@ -42,11 +42,11 @@
     {
       "id": "snhelper",
       "name": "SNHelper",
-      "description": "Помощник для работы в эфире на сервере Galaxy: мероприятия, правила, счётчики, подсказки. Обновляется сам.",
+      "description": "Помощник для работы в эфире на сервере Galaxy: мероприятия, правила, счётчики, подсказки. Обновляется из каталога и сам при запуске.",
       "version": "1.1",
       "version_num": 3,
       "server": "galaxy",
-      "updates": "self",
+      "removable": false,
       "image": "images/snhelper.png",
       "main": "SNHelper.luac",
       "also": ["SNHelper.lua"],

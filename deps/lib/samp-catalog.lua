@@ -5,6 +5,7 @@ M.VERSION = 2
 M.REPO = 'https://raw.githubusercontent.com/egor-pozhitok/samp-scripts/main/'
 M.STATE_FILE = 'config/SNHelper/catalog.state'
 M.IMAGE_DIR = 'resource/SNHelper/catalog'
+M.OWNERS = { ['snhelper.lua'] = 'snhelper', ['snhelper.luac'] = 'snhelper' }
 M.ALWAYS_PROTECTED = { 'SNHelper.lua', 'SNHelper.luac' }
 M.MAX_SIZE = 50 * 1024 * 1024
 M.MAX_FILES = 64
@@ -27,7 +28,6 @@ end
 
 function M.protectSets(protect, deps)
 	local selfSet, shared = {}, {}
-	for _, p in ipairs(M.ALWAYS_PROTECTED) do selfSet[M.normPath(p)] = true end
 	for _, p in ipairs(protect or {}) do selfSet[M.normPath(p)] = true end
 	for _, d in ipairs(deps or {}) do
 		local p = type(d) == 'table' and d.path or d
@@ -58,14 +58,7 @@ local function isMainName(name)
 	return M.safePath(name) and not name:find('/', 1, true) and (name:lower():match('%.lua$') or name:lower():match('%.luac$')) and true or false
 end
 
-local function alwaysProtected(key)
-	for _, p in ipairs(M.ALWAYS_PROTECTED) do
-		if M.normPath(p) == key then return true end
-	end
-	return false
-end
-
-local function parseEntry(e, selfSet, shared, ownKey)
+local function parseEntry(e, selfSet, shared, ownKey, owners)
 	if type(e) ~= 'table' then return nil end
 	if type(e.id) ~= 'string' or #e.id > 40 or not e.id:match(ID_PATTERN) then return nil end
 	if type(e.name) ~= 'string' or e.name:match('^%s*$') or #e.name > 100 then return nil end
@@ -76,24 +69,23 @@ local function parseEntry(e, selfSet, shared, ownKey)
 	if e.image ~= nil and (not M.safePath(e.image) or not e.image:lower():match('%.png$')) then return nil end
 	if not isMainName(e.main) then return nil end
 	local mainKey = M.normPath(e.main)
-	local selfUpdating = e.updates == 'self'
+	local function foreignOwner(key) return owners[key] ~= nil and owners[key] ~= e.id end
+	if selfSet[mainKey] or shared[mainKey] or foreignOwner(mainKey) then return nil end
 	local also = {}
 	if e.also ~= nil then
 		if type(e.also) ~= 'table' or #e.also > 4 then return nil end
 		for _, name in ipairs(e.also) do
 			if type(name) ~= 'string' or not isMainName(name) or M.normPath(name) == mainKey then return nil end
+			local key = M.normPath(name)
+			if selfSet[key] or shared[key] or foreignOwner(key) then return nil end
 			also[#also + 1] = name
 		end
 	end
-	local protectedMain = selfSet[mainKey] or shared[mainKey]
-	if protectedMain then
-		if not (selfUpdating and alwaysProtected(mainKey) and not shared[mainKey]) then return nil end
-		if type(e.files) ~= 'table' or #e.files ~= 1 then return nil end
-	end
 	local foreign = ownKey and mainKey ~= ownKey and ownKey or nil
+	local isAlso = {}
+	for _, n in ipairs(also) do isAlso[M.normPath(n)] = true end
 	local files = fileList(e.files, function(key)
-		if protectedMain and key == mainKey then return true end
-		return not selfSet[key] and not shared[key] and key ~= foreign
+		return not selfSet[key] and not shared[key] and key ~= foreign and not foreignOwner(key) and not isAlso[key]
 	end)
 	if not files then return nil end
 	local own, hasMain = {}, false
@@ -103,13 +95,15 @@ local function parseEntry(e, selfSet, shared, ownKey)
 		if key == mainKey then hasMain = true end
 	end
 	if not hasMain then return nil end
-	local deps = fileList(e.deps, function(key) return not selfSet[key] and not own[key] and key ~= foreign end)
+	local deps = fileList(e.deps, function(key)
+		return not selfSet[key] and not own[key] and key ~= foreign and owners[key] == nil and not isAlso[key]
+	end)
 	if not deps then return nil end
 	local server = type(e.server) == 'string' and #e.server <= 40 and e.server:match(ID_PATTERN) and e.server or nil
 	return {
 		id = e.id, name = e.name, description = e.description or '', version = e.version, version_num = num,
 		image = e.image, main = e.main, files = files, deps = deps,
-		server = server, selfUpdating = selfUpdating, also = also,
+		server = server, also = also, removable = e.removable ~= false,
 	}
 end
 
@@ -161,9 +155,22 @@ function M.parse(info, selfSet, shared, ownKey)
 	if type(info) ~= 'table' then return nil, 'не каталог' end
 	if tonumber(info.format) ~= 1 then return nil, 'формат каталога не поддерживается' end
 	if type(info.scripts) ~= 'table' then return nil, 'в каталоге нет списка скриптов' end
+	local owners = {}
+	for k, v in pairs(M.OWNERS) do owners[k] = v end
+	local base = {}
+	for k, v in pairs(M.OWNERS) do base[k] = v end
+	for _, e in ipairs(info.scripts) do
+		local entry = parseEntry(e, selfSet, shared, ownKey, base)
+		if entry then
+			for _, n in ipairs({ entry.main, unpack(entry.also) }) do
+				local key = M.normPath(n)
+				if owners[key] == nil then owners[key] = entry.id end
+			end
+		end
+	end
 	local list, seen, skipped = {}, {}, 0
 	for _, e in ipairs(info.scripts) do
-		local entry = parseEntry(e, selfSet, shared, ownKey)
+		local entry = parseEntry(e, selfSet, shared, ownKey, owners)
 		if entry and not seen[entry.id] then
 			seen[entry.id] = true
 			list[#list + 1] = entry
@@ -174,15 +181,16 @@ function M.parse(info, selfSet, shared, ownKey)
 	return list, skipped
 end
 
-function M.action(entry, installed)
+function M.action(entry, installed, blocked)
 	if installed == nil then return 'install' end
-	if entry.selfUpdating then return 'managed' end
-	if entry.version_num > installed then return 'update' end
+	if entry.version_num > installed and not (blocked and entry.version_num <= blocked) then return 'update' end
+	if entry.version_num > installed then return 'blocked' end
+	if entry.removable == false then return 'installed' end
 	return 'remove'
 end
 
-function M.selfAction(entry, runningNum)
-	if entry.version_num > (tonumber(runningNum) or 0) then return 'update' end
+function M.selfAction(entry, runningNum, blocked)
+	if entry.version_num > (tonumber(runningNum) or 0) and not (blocked and entry.version_num <= blocked) then return 'update' end
 	return 'self'
 end
 
@@ -256,7 +264,7 @@ function M.helpLines(selfName, extra)
 		'«Обновить» появляется, когда вышла новая версия: файлы заменяются, скрипт перезапускается.'
 			.. (selfName and (' Так же обновляется и сам ' .. selfName .. ' (карточка «этот скрипт»).') or ''),
 		'«Удалить» (нажмите два раза) останавливает скрипт и удаляет его файлы. Общие библиотеки остаются: ими пользуются другие скрипты.',
-		'Скрипт с подписью «обновляется сам» (SNHelper) здесь только устанавливается: обновления он ставит себе сам.',
+		'Новая версия сначала скачивается рядом и проверяется, и только потом заменяет файл; прежний файл остаётся рядом с расширением .bak. Запущенный скрипт после обновления перезапускается.',
 	}
 	for _, line in ipairs(extra or {}) do lines[#lines + 1] = line end
 	for i, line in ipairs(lines) do lines[i] = i .. '. ' .. line end
@@ -362,13 +370,6 @@ function Catalog:isSelf(entry)
 	return false
 end
 
-local function anyMainExists(entry)
-	for _, n in ipairs(mainNames(entry)) do
-		if doesFileExist(full(n)) then return true end
-	end
-	return false
-end
-
 function Catalog:runningVersion()
 	if self.opts.runningVersion then return self.opts.runningVersion end
 	return thisScript().version_num
@@ -392,13 +393,80 @@ function Catalog:setState(id, num)
 	return true
 end
 
-function Catalog:refreshInstalled()
-	local state = self:readState()
-	local installed = {}
-	for _, entry in ipairs(self.list) do
-		if anyMainExists(entry) then installed[entry.id] = state[entry.id] or 0 end
+M.BLOCK_FILE = 'config/SNHelper/catalog.blocked'
+M.SETTLE_SEC = 15
+
+local function blockPath()
+	return full(M.BLOCK_FILE)
+end
+
+function Catalog:readBlocked()
+	return M.stateParse(readFile(blockPath()) or '')
+end
+
+function Catalog:setBlocked(id, num)
+	ensureDir(blockPath())
+	local text = M.stateUpdate(readFile(blockPath()) or '', id, num)
+	local f = io.open(blockPath(), 'w')
+	if not f then return false end
+	f:write(text)
+	f:close()
+	return true
+end
+
+local function installedMain(entry)
+	for _, n in ipairs(mainNames(entry)) do
+		if doesFileExist(full(n)) then return n end
 	end
-	self.installed = installed
+	return nil
+end
+
+local function findRunning(path)
+	local key = M.normPath(path)
+	for _, s in ipairs(script.list()) do
+		if M.normPath(s.path) == key then return s end
+	end
+	return nil
+end
+
+function Catalog:runningOf(entry)
+	if self:isSelf(entry) then return thisScript() end
+	for _, n in ipairs(mainNames(entry)) do
+		local s = findRunning(full(n))
+		if s then return s end
+	end
+	return nil
+end
+
+function Catalog:refreshInstalled()
+	local state, blocked = self:readState(), self:readBlocked()
+	local installed = {}
+	self.justUpdated = self.justUpdated or {}
+	for _, entry in ipairs(self.list) do
+		local name = installedMain(entry)
+		if name then
+			local running = self:runningOf(entry)
+			local rv = running and tonumber(running.version_num)
+			local st = state[entry.id]
+			local settling = self.justUpdated[entry.id] and os.clock() - self.justUpdated[entry.id] < M.SETTLE_SEC
+			if rv and st and rv < st and not settling then
+				blocked[entry.id] = math.max(blocked[entry.id] or 0, st)
+				self:setBlocked(entry.id, blocked[entry.id])
+				self:setState(entry.id, rv)
+				self:log(entry.id .. ': version ' .. st .. ' did not start (running ' .. rv .. '), not offered again')
+			end
+			if rv then
+				installed[entry.id] = rv
+			elseif st then
+				installed[entry.id] = st
+			elseif M.normPath(name) ~= M.normPath(entry.main) then
+				installed[entry.id] = entry.version_num
+			else
+				installed[entry.id] = 0
+			end
+		end
+	end
+	self.installed, self.blocked = installed, blocked
 	self.checkedAt = os.clock()
 end
 
@@ -460,48 +528,80 @@ function Catalog:fetch(event)
 	end)
 end
 
-local function findRunning(path)
-	local key = M.normPath(path)
-	for _, s in ipairs(script.list()) do
-		if M.normPath(s.path) == key then return s end
-	end
-	return nil
-end
-
 function Catalog:fetchFiles(entry)
 	local _, shared = self:sets()
 	local plan = M.plan(entry, function(p) return fileSize(full(p)) end, shared)
+	local mainKey = M.normPath(entry.main)
+	local mainTarget = installedMain(entry) or entry.main
 	self.progress = { done = 0, total = #plan }
 	local ready = {}
+	local function dropReady()
+		for _, r in ipairs(ready) do os.remove(r.tmp) end
+	end
 	for i, f in ipairs(plan) do
-		local final = full(f.path)
+		local isMain = M.normPath(f.path) == mainKey
+		local path = isMain and mainTarget or f.path
+		local final = full(path)
 		local tmp = final .. '.tmp'
 		ensureDir(final)
 		if not self:fetchUrl(f.src, tmp) or fileSize(tmp) ~= f.size then
 			os.remove(tmp)
-			for _, r in ipairs(ready) do os.remove(r.tmp) end
+			dropReady()
 			return false, 'не скачался файл ' .. f.path
 		end
-		ready[#ready + 1] = { tmp = tmp, final = final }
+		if path:lower():match('%.luac?$') and not loadfile(tmp) then
+			os.remove(tmp)
+			dropReady()
+			return false, 'файл ' .. f.path .. ' повреждён'
+		end
+		ready[#ready + 1] = { tmp = tmp, final = final, bak = final .. '.bak', isMain = isMain }
 		self.progress.done = i
 	end
+	local done = {}
+	local function rollback()
+		for k = #done, 1, -1 do
+			local r = done[k]
+			os.remove(r.final)
+			if r.hadOld then os.rename(r.bak, r.final) end
+		end
+		dropReady()
+	end
 	for _, r in ipairs(ready) do
-		os.remove(r.final)
+		r.hadOld = doesFileExist(r.final)
+		if r.hadOld then
+			os.remove(r.bak)
+			if os.rename(r.final, r.bak) ~= true then
+				rollback()
+				return false, 'не удалось заменить ' .. r.final
+			end
+		end
 		if os.rename(r.tmp, r.final) ~= true then
-			os.remove(r.tmp)
+			if r.hadOld then os.rename(r.bak, r.final) end
+			rollback()
 			return false, 'не удалось записать ' .. r.final
 		end
+		done[#done + 1] = r
 	end
-	return true
+	for _, r in ipairs(done) do
+		if r.hadOld and not r.isMain then os.remove(r.bak) end
+	end
+	return true, mainTarget
+end
+
+function Catalog:isBlocked(entry)
+	local b = self.blocked and self.blocked[entry.id]
+	return b ~= nil and entry.version_num <= b and self.installed[entry.id] ~= nil
 end
 
 function Catalog:install(entry)
-	if entry.selfUpdating and anyMainExists(entry) then return false, 'он уже установлен' end
-	local ok, err = self:fetchFiles(entry)
-	if not ok then return false, err end
+	if self:isBlocked(entry) then return false, 'эта версия уже не запустилась, ждите следующую' end
+	local ok, target = self:fetchFiles(entry)
+	if not ok then return false, target end
 	self:setState(entry.id, entry.version_num)
-	local path = full(entry.main)
-	local running = findRunning(path)
+	self.justUpdated = self.justUpdated or {}
+	self.justUpdated[entry.id] = os.clock()
+	local path = full(target)
+	local running = self:runningOf(entry)
 	local started
 	if running then
 		started = pcall(running.reload, running)
@@ -513,17 +613,20 @@ function Catalog:install(entry)
 end
 
 function Catalog:updateSelf(entry)
+	if self:isBlocked(entry) then return false, 'эта версия уже не запустилась, ждите следующую' end
 	local ok, err = self:fetchFiles(entry)
 	if not ok then return false, err end
 	self:setState(entry.id, entry.version_num)
+	self.justUpdated = self.justUpdated or {}
+	self.justUpdated[entry.id] = os.clock()
 	sampAddChatMessage((self.opts.chatPrefix or 'Script') .. ' | {FFFFFF}Обновление ' .. entry.version .. ' установлено, перезапускаю ' .. self.opts.selfName .. '.', 0xC0C0C0)
 	thisScript():reload()
 	return true
 end
 
 function Catalog:remove(entry)
-	if entry.selfUpdating then return false end
-	local running = findRunning(full(entry.main))
+	if entry.removable == false or self:isSelf(entry) then return false end
+	local running = self:runningOf(entry)
 	if running then
 		pcall(running.unload, running)
 		wait(200)
@@ -532,7 +635,18 @@ function Catalog:remove(entry)
 		os.remove(full(path))
 	end
 	self:setState(entry.id, nil)
-	return not doesFileExist(full(entry.main))
+	return installedMain(entry) == nil
+end
+
+function Catalog:needsConfirm(entry)
+	if entry.id == 'snhelper' then return true end
+	return not self:isSelf(entry) and self:runningOf(entry) ~= nil
+end
+
+function Catalog:confirmText(entry)
+	local name = self.opts.u8:decode(entry.name)
+	local extra = entry.id == 'snhelper' and ' Несохранённое состояние мероприятия сбросится.' or ''
+	return 'Скрипт ' .. name .. ' перезапустится.' .. extra .. '\nНажмите «Обновить» ещё раз, чтобы обновить.'
 end
 
 function Catalog:run(entry, kind)
@@ -552,31 +666,24 @@ function Catalog:run(entry, kind)
 			else
 				notify('Не удалось удалить скрипт ' .. name .. '.\nУдалите файл moonloader/' .. entry.main .. ' вручную.', 6, 'error')
 			end
-		elseif kind == 'self' and entry.selfUpdating then
-			local fn = self.opts.selfUpdate
-			local ok, done = false, nil
-			if fn then ok, done = pcall(fn, entry) end
-			if fn and not ok then self:log(done) end
-			if not (ok and done) then
-				notify('Не удалось обновить ' .. self.opts.selfName .. '.\nПопробуйте позже.', 6, 'error')
-			end
 		elseif kind == 'self' then
 			local ok, done, extra = pcall(self.updateSelf, self, entry)
 			if not ok then self:log(done) end
 			if not (ok and done) then
-				notify('Не удалось обновить ' .. self.opts.selfName .. ':\n' .. tostring(ok and extra or 'ошибка скрипта') .. '.\nПопробуйте позже.', 6, 'error')
+				notify('Не удалось обновить ' .. self.opts.selfName .. ':\n' .. tostring(ok and extra or 'ошибка скрипта') .. '.\nПрежняя версия осталась.', 6, 'error')
 			end
 		else
+			local wasInstalled = self.installed[entry.id] ~= nil
 			local ok, done, extra = pcall(self.install, self, entry)
 			if not ok then self:log(done) end
 			if ok and done then
 				if extra then
-					notify('Скрипт ' .. name .. ' ' .. entry.version .. ' установлен и запущен.', 5, 'success')
+					notify('Скрипт ' .. name .. ' ' .. entry.version .. (wasInstalled and ' обновлён и перезапущен.' or ' установлен и запущен.'), 5, 'success')
 				else
 					notify('Скрипт ' .. name .. ' установлен, но не запустился.\nПерезапустите игру.', 6, 'error')
 				end
 			else
-				notify('Не удалось установить ' .. name .. ':\n' .. tostring(ok and extra or 'ошибка скрипта') .. '.\nПопробуйте позже.', 6, 'error')
+				notify('Не удалось ' .. (wasInstalled and 'обновить ' or 'установить ') .. name .. ':\n' .. tostring(ok and extra or 'ошибка скрипта') .. '.' .. (wasInstalled and '\nПрежняя версия осталась.' or '\nПопробуйте позже.'), 6, 'error')
 			end
 		end
 		self:refreshInstalled()
@@ -629,12 +736,14 @@ function Catalog:drawCard(entry, width)
 	local pad = self.opts.cardPad or 10
 	local imgSize = math.floor((self.opts.imageSize or 44) * imgui.GetIO().FontGlobalScale)
 	local own = self:isSelf(entry)
+	local blocked = self.blocked and self.blocked[entry.id]
 	local action
 	if own then
-		action = M.selfAction(entry, self:runningVersion())
+		action = M.selfAction(entry, self:runningVersion(), blocked)
 	else
-		action = M.action(entry, self.installed[entry.id])
+		action = M.action(entry, self.installed[entry.id], blocked)
 	end
+	local armed = self.confirm and self.confirm.id == entry.id and os.clock() - self.confirm.at < 5
 	local mine = self.busy == entry.id
 	local label
 	if mine then
@@ -642,8 +751,12 @@ function Catalog:drawCard(entry, width)
 		label = self.busyKind == 'remove' and u8('Удаление...') or (p and p.total > 0 and u8('Загрузка ' .. p.done .. ' из ' .. p.total)) or u8('Загрузка...')
 	elseif action == 'self' then
 		label = u8('этот скрипт')
-	elseif action == 'managed' then
-		label = u8('обновляется сам')
+	elseif action == 'installed' then
+		label = u8('установлен')
+	elseif action == 'blocked' then
+		label = u8('версия ') .. entry.version .. u8(' не запустилась')
+	elseif action == 'update' and armed then
+		label = fa.ICON_FA_SYNC .. u8(' Ещё раз')
 	elseif action == 'install' then
 		label = fa.ICON_FA_DOWNLOAD .. u8(' Установить')
 	elseif action == 'update' then
@@ -652,7 +765,7 @@ function Catalog:drawCard(entry, width)
 		label = fa.ICON_FA_TRASH .. u8(' Удалить')
 	end
 	local buttonWidth
-	if (action == 'self' or action == 'managed') and not mine then
+	if (action == 'self' or action == 'installed' or action == 'blocked') and not mine then
 		buttonWidth = imgui.CalcTextSize(label).x
 	elseif action == 'remove' and not mine then
 		buttonWidth = ui.dangerButtonWidth(label)
@@ -690,12 +803,18 @@ function Catalog:drawCard(entry, width)
 					ui.button(label .. '##' .. id .. 'Busy' .. entry.id, nil, V2(buttonWidth, 0))
 				elseif action == 'self' then
 					ui.label(label, C.accent)
-				elseif action == 'managed' then
+				elseif action == 'installed' or action == 'blocked' then
 					ui.label(label, C.muted)
 				elseif action == 'remove' then
 					if ui.dangerButton(id .. entry.id, label, V2(buttonWidth, 0)) then self:run(entry, 'remove') end
 				elseif ui.button(label .. '##' .. id .. entry.id, 'primary', V2(buttonWidth, 0)) then
-					self:run(entry, own and 'self' or 'install')
+					if action == 'update' and self:needsConfirm(entry) and not armed then
+						self.confirm = { id = entry.id, at = os.clock() }
+						ui.notify(self:confirmText(entry), 5)
+					else
+						self.confirm = nil
+						self:run(entry, own and 'self' or 'install')
+					end
 				end
 			imgui.PopStyleVar()
 			if entry.description ~= '' then
