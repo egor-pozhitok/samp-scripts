@@ -105,8 +105,8 @@ if APBOOT_TEST then return APBoot end
 script_name('samp-audio-player')
 script_author('GORYCH')
 script_description('Music player: radio stations and tracks from a folder')
-script_version_number(1)
-script_version('1.0')
+script_version_number(2)
+script_version('1.1')
 
 function APBoot.ensureDir(filePath)
 	local dir = filePath:match('^(.*)[/\\][^/\\]+$')
@@ -275,6 +275,122 @@ function APLogic.toastUpdate(queue, now, maxVisible)
 		shown[#shown + 1] = { item = item, alpha = math.max(0, alpha) }
 	end
 	return shown
+end
+
+-- Окно плеера (src/view.lua)
+
+-- Время «м:сс» или «ч:мм:сс».
+function APLogic.formatTime(sec)
+	sec = math.floor(tonumber(sec) or 0)
+	if sec < 0 then sec = 0 end
+	local h, m, s = math.floor(sec / 3600), math.floor(sec / 60) % 60, sec % 60
+	if h > 0 then return ('%d:%02d:%02d'):format(h, m, s) end
+	return ('%d:%02d'):format(m, s)
+end
+
+-- Нижний регистр строки UTF-8: латиница и кириллица (А-Я, Ё). Нужен для поиска по спискам ImGui.
+function APLogic.utf8Lower(text)
+	return (text:gsub('[%z\1-\127\194-\244][\128-\191]*', function(ch)
+		if #ch == 1 then return ch:lower() end
+		if #ch ~= 2 then return ch end
+		local a, b = ch:byte(1, 2)
+		if a == 0xD0 and b >= 0x90 and b <= 0x9F then return string.char(0xD0, b + 0x20) end -- А-П
+		if a == 0xD0 and b >= 0xA0 and b <= 0xAF then return string.char(0xD1, b - 0x20) end -- Р-Я
+		if a == 0xD0 and b == 0x81 then return string.char(0xD1, 0x91) end -- Ё
+		return ch
+	end))
+end
+
+-- Порядок строк списка: только подходящие под запрос (подстрока без учёта регистра, пробелы по краям
+-- не считаются), сначала избранные (fav[индекс] = true), в остальном - исходный порядок.
+function APLogic.listOrder(names, query, fav)
+	local q = APLogic.utf8Lower(tostring(query or '')):match('^%s*(.-)%s*$')
+	local first, rest = {}, {}
+	for i, name in ipairs(names) do
+		if q == '' or APLogic.utf8Lower(name):find(q, 1, true) then
+			table.insert((fav and fav[i]) and first or rest, i)
+		end
+	end
+	for _, i in ipairs(rest) do first[#first + 1] = i end
+	return first
+end
+
+-- Избранные станции в ini: адреса потоков через «|».
+function APLogic.favParse(text)
+	local set = {}
+	for part in tostring(text or ''):gmatch('[^|]+') do set[part] = true end
+	return set
+end
+
+function APLogic.favText(set)
+	local list = {}
+	for url in pairs(set) do list[#list + 1] = url end
+	table.sort(list)
+	return table.concat(list, '|')
+end
+
+-- Высоты столбиков индикатора (0.15..1) в момент t: сумма синусов с разной частотой и фазой у каждого
+-- столбика. Это имитация: настоящий спектр звука не читается.
+function APLogic.eqBars(t, n)
+	local bars = {}
+	for i = 1, n do
+		local v = 0.5 + 0.28 * math.sin(t * (5.1 + i * 1.7) + i * 1.3) + 0.22 * math.sin(t * (2.3 + i * 0.9) + i * 2.7)
+		bars[i] = math.max(0.15, math.min(1, v))
+	end
+	return bars
+end
+
+-- Сколько секунд трек уже играл: st = { key, elapsed, last }. key - текущий поток (новый поток - отсчёт
+-- с нуля), playing - играет ли сейчас; время на паузе не считается.
+function APLogic.elapsedStep(st, key, playing, now)
+	if st.key ~= key then
+		st.key, st.elapsed = key, 0
+	elseif playing and st.last then
+		st.elapsed = (st.elapsed or 0) + (now - st.last)
+	end
+	st.elapsed = st.elapsed or 0
+	st.last = playing and now or nil
+	return st.elapsed
+end
+
+-- Доля прослушанного трека 0..1 или nil, если длина неизвестна.
+function APLogic.progress(elapsed, length)
+	length = tonumber(length)
+	if not length or length <= 0 then return nil end
+	return math.max(0, math.min(1, (tonumber(elapsed) or 0) / length))
+end
+
+-- Состояние для строки «Сейчас играет»: info = { loading = секунды подключения, error = текст,
+-- state = 1 играет / 2 пауза / -1 остановлен }. Возвращает вид и текст (CP1251).
+function APLogic.playerStatus(info)
+	if info.loading then return 'loading', 'Подключение... ' .. info.loading .. ' с' end
+	if info.error then return 'error', info.error end
+	if info.state == 1 then return 'playing', 'Играет' end
+	if info.state == 2 then return 'paused', 'Пауза' end
+	return 'stopped', 'Остановлено'
+end
+
+function APLogic.trackTitle(file)
+	return (tostring(file):gsub('%.[mM][pP]3$', ''))
+end
+
+-- Значок громкости: 'off' (0), 'down' (до половины), 'up'.
+function APLogic.volumeIcon(v)
+	if v <= 0.001 then return 'off' end
+	if v < 0.5 then return 'down' end
+	return 'up'
+end
+
+-- Громкость по положению мыши на дорожке ползунка (x0 - левый край, w - ширина).
+function APLogic.volumeFromX(mx, x0, w)
+	if w <= 0 then return 0 end
+	return math.max(0, math.min(1, (mx - x0) / w))
+end
+
+-- Предыдущий / следующий по кругу: i + step в пределах 1..n.
+function APLogic.wrapIndex(i, step, n)
+	if n <= 0 then return 1 end
+	return (i - 1 + step) % n + 1
 end
 
 if APLOGIC_TEST then return APLogic end
@@ -494,9 +610,9 @@ do
 	end
 end
 -- Аудиоплеер для MoonLoader: радиостанции и треки (mp3) из папки на компьютере.
--- Плеер перенесён из SNHelper без изменений в поведении: те же станции, фоновое подключение к станции,
--- повтор трека, громкость. Свои окно, команда (/aplayer), клавиша (по умолчанию F12) и настройки
--- (moonloader/config/samp-audio-player.ini).
+-- Воспроизведение перенесено из SNHelper без изменений: те же станции, фоновое подключение к станции,
+-- повтор трека, громкость. Свои окно (src/view.lua), команда (/aplayer), клавиша (по умолчанию F12)
+-- и настройки (moonloader/config/samp-audio-player.ini).
 local hook = require 'lib.samp.events'
 require 'lib.moonloader'
 
@@ -541,6 +657,12 @@ function imgui.BeforeDrawFrame()
 			fonts:AddFontFromFileTTF(iconFont, 13.0, merge, fa_glyph_ranges)
 		end
 		APUI.fontLarge = fonts:AddFontFromFileTTF(file, 21.0, nil, cyrillic)
+		-- Значки и в крупном шрифте: ими рисуются большая кнопка «Играть» и обложка в «Сейчас играет».
+		if doesFileExist(iconFont) then
+			local merge = imgui.ImFontConfig()
+			merge.MergeMode = true
+			fonts:AddFontFromFileTTF(iconFont, 18.0, merge, fa_glyph_ranges)
+		end
 	end
 end
 
@@ -874,179 +996,173 @@ function apPlayStation()
 	end
 end
 
--- Панель плеера (вкладки «Станции» и «Плеер», кнопки, громкость) размером width x height.
-function apDrawPlayer(width, height)
-	imgui.BeginChild('player', imgui.ImVec2(width, height), false)
-		local contentWidth = imgui.GetWindowContentRegionWidth()
-		local spacing = imgui.GetStyle().ItemSpacing.x
+-- Действия плеера. Тела перенесены без изменений из прежней панели (кнопки «Выбор», играть/пауза,
+-- стоп, повтор, предыдущий и следующий трек, ползунок громкости); окно (src/view.lua) только вызывает их.
 
-		currentPage = APUI.tabs('player', { fa.ICON_FA_BROADCAST_TOWER..u8' Станции', fa.ICON_FA_HEADPHONES..u8' Плеер' }, currentPage)
-
-		imgui.Dummy(imgui.ImVec2(0, 5))
-
-		if currentPage == 1 then
-			imgui.TextDisabled(u8'Станция')
-			imgui.PushItemWidth(contentWidth)
-				if imgui.Combo("##stations", current_radio, radiolist, #radiolist) then
-					apPlayStation()
-				end
-			imgui.PopItemWidth()
-			local loading = apRadioLoadingSeconds()
-			if loading then
-				imgui.TextDisabled(u8('Подключение... '..loading..' с'))
-			end
-		else
-			local selectLabel = u8'Выбор'
-			imgui.TextDisabled(u8'Папка с музыкой')
-			imgui.PushItemWidth(contentWidth - spacing - APUI.buttonWidth(selectLabel))
-				imgui.InputText("##musicpath", musicpath)
-			imgui.PopItemWidth()
-			imgui.SameLine()
-			if APUI.button(selectLabel.."##musicpathselect") then
-				if doesDirectoryExist(u8:decode(musicpath.v)) then
-					local found = {}
-					results = ''
-					for v in lfs.dir(u8:decode(musicpath.v)) do
-						if string.find(v,"mp3") then
-							found[#found+1] = v
-						end
-					end
-					if #found < 1 then
-						results = "Музыка не найдена"
-					else
-						musics = found
-						current_music = 1
-						data.music.path = u8:decode(musicpath.v)
-						inicfg.save(data, cfgpath)
-						apReleaseStream()
-						apStreamIsTrack = true
-						apStoppedByUser = true
-						icon_play_pause = fa.ICON_FA_PLAY
-					end
-				else
-					results = "Неправильный путь"
-				end
-			end
-
-			if #musics > 0 then
-				imgui.TextDisabled(apFitText(u8(musics[current_music]), contentWidth))
-			end
-			if results and results ~= '' then
-				imgui.TextColored(APUI.colors.danger, apFitText(u8(results), contentWidth))
+-- «Выбор» папки: найти mp3, запомнить папку; играющий поток останавливается.
+function apScanFolder()
+	if doesDirectoryExist(u8:decode(musicpath.v)) then
+		local found = {}
+		results = ''
+		for v in lfs.dir(u8:decode(musicpath.v)) do
+			if string.find(v,"mp3") then
+				found[#found+1] = v
 			end
 		end
-
-		imgui.Dummy(imgui.ImVec2(0, 5))
-
-		-- Кнопки управления
-			local withTracks = currentPage == 2 and #musics > 0
-			local transportSize = imgui.ImVec2(APUI.frameHeight() * 1.4, 0)
-			local transportCount = withTracks and 5 or 3
-			local transportTotal = transportCount * transportSize.x + (transportCount - 1) * spacing
-			imgui.SetCursorPosX(math.max(0, (contentWidth - transportTotal) / 2))
-			if withTracks then
-				if APUI.button(fa.ICON_FA_BACKWARD.."##backward", nil, transportSize) then
-					if musics[current_music-1] then
-						current_music = current_music - 1
-					else
-						current_music = #musics
-					end
-					apPlayTrack()
-				end
-				imgui.Hint(u8'Предыдущий трек')
-				imgui.SameLine()
-			end
-			if APUI.button(icon_play_pause.."##stoppause", nil, transportSize) then
-				if apRadio.job then
-					-- Идёт подключение к станции: второй раз не открываем.
-				elseif apRadio.handle then
-					local state = apRadioState()
-					if state == 1 then
-						icon_play_pause = fa.ICON_FA_PLAY
-						apRadioPause()
-					elseif state == 2 then
-						icon_play_pause = fa.ICON_FA_PAUSE
-						apRadioResume()
-					else
-						apPlayStation()
-					end
-				elseif not audioStream then
-					if currentPage == 2 and #musics > 0 then
-						apPlayTrack()
-					elseif currentPage == 1 then
-						apPlayStation()
-					end
-				else
-					local state = getAudioStreamState(audioStream)
-					if state == 2 then
-						icon_play_pause = fa.ICON_FA_PAUSE
-						setAudioStreamState(audioStream, as_action.RESUME)
-					elseif state == -1 then
-						icon_play_pause = fa.ICON_FA_PAUSE
-						setAudioStreamState(audioStream, as_action.PLAY)
-						apStoppedByUser = false
-					elseif state == 1 then
-						icon_play_pause = fa.ICON_FA_PLAY
-						setAudioStreamState(audioStream, as_action.PAUSE)
-					end
-				end
-			end
-			imgui.Hint(u8'Играть / Пауза')
-			imgui.SameLine()
-			if APUI.button(fa.ICON_FA_STOP..'##stop', nil, transportSize) then
-				apStoppedByUser = true
-				apReleaseStream()
-				icon_play_pause = fa.ICON_FA_PLAY
-			end
-			imgui.Hint(u8'Стоп')
-			imgui.SameLine()
-			if APUI.button(fa.ICON_FA_REDO..'##repeat', music_repeat.v and 'primary' or nil, transportSize) then
-				music_repeat.v = not music_repeat.v
-				data.music.rep = music_repeat.v
-				inicfg.save(data, cfgpath)
-			end
-			imgui.Hint(u8'Повтор трека')
-			if withTracks then
-				imgui.SameLine()
-				if APUI.button(fa.ICON_FA_FORWARD.."##forward", nil, transportSize) then
-					if musics[current_music+1] then
-						current_music = current_music + 1
-					else
-						current_music = 1
-					end
-					apPlayTrack()
-				end
-				imgui.Hint(u8'Следующий трек')
-			end
-
-		imgui.Dummy(imgui.ImVec2(0, 5))
-
-		-- Громкость
-			local volumeLabel = fa.ICON_FA_VOLUME_DOWN..u8' Громкость'
-			APUI.label(volumeLabel)
-			imgui.SameLine()
-			imgui.PushItemWidth(contentWidth - imgui.CalcTextSize(volumeLabel).x - spacing)
-				if imgui.SliderFloat(u8'##volume_player', volume_player, 0, 1) then
-					if audioStream then
-						setAudioStreamVolume(audioStream, volume_player.v)
-					end
-					apRadioVolume(volume_player.v)
-					data.music.volume = math.floor(volume_player.v * 100 + 0.5)
-					apVolumeDirty = true
-				end
-				if apVolumeDirty and not imgui.IsMouseDown(0) then
-					apVolumeDirty = false
-					inicfg.save(data, cfgpath)
-				end
-			imgui.PopItemWidth()
-
-	imgui.EndChild()
+		if #found < 1 then
+			results = "Музыка не найдена"
+		else
+			musics = found
+			current_music = 1
+			data.music.path = u8:decode(musicpath.v)
+			inicfg.save(data, cfgpath)
+			apReleaseStream()
+			apStreamIsTrack = true
+			apStoppedByUser = true
+			icon_play_pause = fa.ICON_FA_PLAY
+		end
+	else
+		results = "Неправильный путь"
+	end
 end
 
--- Высота панели плеера: самая высокая вкладка («Плеер» с подписью ошибки), чтобы окно не прыгало.
-local function apPlayerHeight()
-	local frame, line, gap = APUI.frameHeight(), imgui.GetTextLineHeight(), imgui.GetStyle().ItemSpacing.y
-	return math.ceil(frame * 4 + line * 3 + 5 * 3 + gap * 9 + 2)
+-- Список треков сохранённой папки при запуске скрипта: без сообщений и без остановки звука (он ещё не играет).
+function apLoadFolderQuiet()
+	local path = u8:decode(musicpath.v)
+	if not doesDirectoryExist(path) then return end
+	local ok, found = pcall(function()
+		local list = {}
+		for v in lfs.dir(path) do
+			if string.find(v,"mp3") then list[#list+1] = v end
+		end
+		return list
+	end)
+	if ok and #found > 0 then
+		musics = found
+		current_music = 1
+	end
+end
+
+function apTogglePlay()
+	if apRadio.job then
+		-- Идёт подключение к станции: второй раз не открываем.
+	elseif apRadio.handle then
+		local state = apRadioState()
+		if state == 1 then
+			icon_play_pause = fa.ICON_FA_PLAY
+			apRadioPause()
+		elseif state == 2 then
+			icon_play_pause = fa.ICON_FA_PAUSE
+			apRadioResume()
+		else
+			apPlayStation()
+		end
+	elseif not audioStream then
+		if currentPage == 2 and #musics > 0 then
+			apPlayTrack()
+		elseif currentPage == 1 then
+			apPlayStation()
+		end
+	else
+		local state = getAudioStreamState(audioStream)
+		if state == 2 then
+			icon_play_pause = fa.ICON_FA_PAUSE
+			setAudioStreamState(audioStream, as_action.RESUME)
+		elseif state == -1 then
+			icon_play_pause = fa.ICON_FA_PAUSE
+			setAudioStreamState(audioStream, as_action.PLAY)
+			apStoppedByUser = false
+		elseif state == 1 then
+			icon_play_pause = fa.ICON_FA_PLAY
+			setAudioStreamState(audioStream, as_action.PAUSE)
+		end
+	end
+end
+
+function apStop()
+	apStoppedByUser = true
+	apReleaseStream()
+	icon_play_pause = fa.ICON_FA_PLAY
+end
+
+function apToggleRepeat()
+	music_repeat.v = not music_repeat.v
+	data.music.rep = music_repeat.v
+	inicfg.save(data, cfgpath)
+end
+
+function apPrevTrack()
+	if musics[current_music-1] then
+		current_music = current_music - 1
+	else
+		current_music = #musics
+	end
+	apPlayTrack()
+end
+
+function apNextTrack()
+	if musics[current_music+1] then
+		current_music = current_music + 1
+	else
+		current_music = 1
+	end
+	apPlayTrack()
+end
+
+-- Громкость 0..1: сразу в играющий поток; в ini сохраняется, когда отпущена кнопка мыши (см. src/view.lua).
+function apSetVolume(value)
+	volume_player.v = value
+	if audioStream then
+		setAudioStreamVolume(audioStream, volume_player.v)
+	end
+	apRadioVolume(volume_player.v)
+	data.music.volume = math.floor(volume_player.v * 100 + 0.5)
+	apVolumeDirty = true
+end
+
+-- Что сейчас источник: треки (играет или выбран трек из папки) или радио.
+function apSourceIsTracks()
+	return #musics > 0 and (apStreamIsTrack or (currentPage == 2 and not apRadio.job and not apRadio.handle))
+end
+
+-- Предыдущий / следующий: для треков - как раньше, для радио - соседняя станция списка.
+function apStep(step)
+	if apSourceIsTracks() then
+		if step < 0 then apPrevTrack() else apNextTrack() end
+	else
+		current_radio.v = APLogic.wrapIndex(current_radio.v + 1, step, #radiolist) - 1
+		apPlayStation()
+	end
+end
+
+-- Строка списка: станция i (как выбор в прежнем выпадающем списке) или трек i.
+function apPlayStationAt(i)
+	current_radio.v = i - 1
+	apPlayStation()
+end
+
+function apPlayTrackAt(i)
+	current_music = i
+	apPlayTrack()
+end
+
+-- Избранные станции: адреса потоков в data.music.favorites.
+local apFavorites = {}
+function apIsFavorite(i)
+	local station = radio_stations[i]
+	return station and apFavorites[station[2]] or false
+end
+
+function apToggleFavorite(i)
+	local station = radio_stations[i]
+	if not station then return end
+	apFavorites[station[2]] = not apFavorites[station[2]] or nil
+	data.music.favorites = APLogic.favText(apFavorites)
+	inicfg.save(data, cfgpath)
+end
+
+function apLoadFavorites()
+	apFavorites = APLogic.favParse(data.music.favorites)
 end
 
 local function apKeyName(code)
@@ -1081,34 +1197,6 @@ local function apDrawKeyRow()
 end
 
 APUI.applyStyle()
-
-function imgui.OnDrawFrame()
-	APUI.drawToasts()
-	if not apWindow.v or not data then return end
-	local width = 400
-	local x, y = tonumber(data.window.posX) or -1, tonumber(data.window.posY) or -1
-	if x < 0 or y < 0 or x > resX - 60 or y > resY - 60 then x, y = math.floor((resX - width) / 2), math.floor(resY / 4) end
-	imgui.SetNextWindowPos(imgui.ImVec2(x, y), imgui.Cond.FirstUseEver)
-	if APUI.fontBase then imgui.PushFont(APUI.fontBase) end
-	imgui.PushStyleVar(imgui.StyleVar.WindowPadding, imgui.ImVec2(20, 18))
-	imgui.Begin('##sampaudioplayer', apWindow, imgui.WindowFlags.NoResize + imgui.WindowFlags.NoCollapse + imgui.WindowFlags.NoTitleBar
-		+ imgui.WindowFlags.NoScrollbar + imgui.WindowFlags.AlwaysAutoResize)
-		-- Внутри окна возвращаем обычный отступ, чтобы 20x18 не достался подсказкам и списку станций.
-		imgui.PushStyleVar(imgui.StyleVar.WindowPadding, imgui.ImVec2(12, 12))
-		local pos = imgui.GetWindowPos()
-		apWindowPos = { x = math.floor(pos.x), y = math.floor(pos.y) }
-		APUI.header(fa.ICON_FA_MUSIC..u8' Аудиоплеер')
-		local closeWidth = APUI.buttonWidth(fa.ICON_FA_TIMES)
-		imgui.SameLine(20 + width - closeWidth)
-		if APUI.button(fa.ICON_FA_TIMES..'##apclose') then apWindow.v = false end
-		apDrawPlayer(width, apPlayerHeight())
-		imgui.Dummy(imgui.ImVec2(0, 2))
-		apDrawKeyRow()
-		imgui.PopStyleVar()
-	imgui.End()
-	imgui.PopStyleVar()
-	if APUI.fontBase then imgui.PopFont() end
-end
 
 function onWindowMessage(msg, wparam, lparam)
 	if msg ~= 0x100 then return end -- WM_KEYDOWN
@@ -1170,11 +1258,13 @@ function main()
 			path = 'C:\\Users\\User\\Music',
 			rep = false,
 			volume = 100,
+			favorites = '', -- избранные станции: адреса потоков через «|»
 		},
 		window = {
 			key = DEFAULT_KEY,
 			posX = -1, -- левый верхний угол окна; -1 - по центру экрана
 			posY = -1,
+			mini = false, -- мини-режим: узкая полоска с названием и кнопками
 		},
 	}, cfgpath)
 	music_repeat.v = data.music.rep == true or data.music.rep == 'true'
@@ -1183,6 +1273,8 @@ function main()
 	apStreamIsTrack = false
 	apLastRestart = 0
 	musicpath.v = u8(tostring(data.music.path))
+	apLoadFavorites()
+	apLoadFolderQuiet()
 	sampRegisterChatCommand('aplayer', function()
 		apWindow.v = not apWindow.v
 	end)
@@ -1192,6 +1284,7 @@ function main()
 	while true do
 		wait(0)
 		apRadioPoll()
+		apViewTick()
 		-- Повтор трека: поток есть, повтор включён, пользователь не нажимал Stop, не чаще раза в секунду.
 		if audioStream and apStreamIsTrack and not apStoppedByUser and musics[current_music] then
 			local state = getAudioStreamState(audioStream)
@@ -1215,4 +1308,522 @@ function main()
 		end
 		wasOpen = apWindow.v
 	end
+end
+-- Окно плеера. Файл идёт в склейке после main.lua: состояние (musics, current_radio, audioStream...) и
+-- действия (apTogglePlay, apStep, apSetVolume...) берутся оттуда. Здесь только отрисовка и то, что
+-- окно показывает: название, состояние, время трека.
+--
+-- Окно (сверху вниз): заголовок с кнопками (клавиша, мини-режим, закрыть); строка настройки клавиши
+-- (по кнопке); карточка «Сейчас играет» (обложка-значок, название, состояние, индикатор-эквалайзер);
+-- время трека или метка «Прямой эфир»; ряд управления (повтор, предыдущий, играть/пауза, следующий,
+-- стоп) и громкость; вкладки «Радио» / «Мои треки»; папка с музыкой (на вкладке треков); поиск; список.
+-- Мини-режим: одна полоска с обложкой, названием, кнопками и возвратом к полному окну.
+--
+-- Пары ImGui: каждый Push* снимается в той же функции и том же окне; ранних выходов между ними нет.
+
+local V2, V4 = imgui.ImVec2, imgui.ImVec4
+local FULL_W, MINI_W = 440, 380
+local LIST_ROWS = 6
+local apView = {
+	openT = nil, settings = false, eqT = 0, eqBars = nil,
+	search = { imgui.ImBuffer('', 64), imgui.ImBuffer('', 64) },
+}
+-- Что показывает окно: ошибка подключения, время трека, длина трека (см. apViewTick).
+local apNow = { wasLoading = false, error = nil, track = {}, lengthKey = nil, length = nil }
+
+local function u32(color)
+	return imgui.GetColorU32(color)
+end
+
+local function withAlpha(color, alpha)
+	return V4(color.x, color.y, color.z, color.w * alpha)
+end
+
+-- Каждый кадр из main(): заметить, что станция не подключилась, посчитать время трека, узнать его длину.
+function apViewTick()
+	if apRadio.job then
+		apNow.wasLoading = true
+		apNow.error = nil
+	elseif apNow.wasLoading then
+		apNow.wasLoading = false
+		if not apRadio.handle and not audioStream then apNow.error = 'Станция не подключилась' end
+	end
+	if apRadio.handle or audioStream then apNow.error = nil end
+	local key = (apStreamIsTrack and audioStream) or nil
+	local playing = key ~= nil and getAudioStreamState(audioStream) == 1
+	APLogic.elapsedStep(apNow.track, key, playing, os.clock())
+	if key ~= apNow.lengthKey then
+		apNow.lengthKey, apNow.length = key, nil
+		if key then
+			-- Длина в секундах; странное значение (0, больше 10 часов) - длина неизвестна.
+			local ok, length = pcall(getAudioStreamLength, audioStream)
+			length = ok and tonumber(length) or nil
+			if length and length > 0 and length < 36000 then apNow.length = length end
+		end
+	end
+end
+
+-- Что играет: название (UTF-8), состояние для APLogic.playerStatus, радио ли это.
+local function apNowPlaying()
+	local loading = apRadioLoadingSeconds()
+	local state = -1
+	if apRadio.handle then
+		state = apRadioState()
+	elseif audioStream then
+		state = getAudioStreamState(audioStream)
+	end
+	local title, isRadio
+	if apRadio.job then
+		title, isRadio = u8(apRadio.job.name), true
+	elseif apStreamIsTrack and musics[current_music] then
+		title, isRadio = u8(APLogic.trackTitle(musics[current_music])), false
+	elseif apRadio.handle or audioStream then
+		title, isRadio = radiolist[current_radio.v + 1] or '', true
+	end
+	local kind, text = APLogic.playerStatus({ loading = loading, error = apNow.error, state = state })
+	if not title then
+		title = u8'Ничего не играет'
+		if kind == 'stopped' then text = 'Выберите станцию или трек' end
+		isRadio = currentPage == 1
+	end
+	return title, kind, u8(text), isRadio
+end
+
+-- Круглая кнопка со значком в ячейке diameter x boxH (круг по центру высоты: кнопки разного размера
+-- в одном ряду стоят по одной средней линии). kind: nil, 'primary' (акцент, значок крупным шрифтом),
+-- 'on' / 'off' (переключатель: значок акцентный или погашенный).
+local function apRoundButton(id, icon, diameter, kind, boxH)
+	local C = APUI.colors
+	boxH = boxH or diameter
+	local pos = imgui.GetCursorScreenPos()
+	local pressed = imgui.InvisibleButton('##round' .. id, V2(diameter, boxH))
+	pos = V2(pos.x, pos.y + (boxH - diameter) / 2)
+	local hover = APUI.animate('round:' .. id, imgui.IsItemHovered() and 1 or 0, 16)
+	local base, over, textColor = C.control, C.controlHover, C.text
+	if kind == 'primary' then
+		base, over, textColor = C.accent, C.accentSoft, C.white
+	elseif kind == 'on' then
+		textColor = C.accentSoft
+	elseif kind == 'off' then
+		base, over, textColor = C.clear, C.control, C.faint
+	end
+	local center = V2(pos.x + diameter / 2, pos.y + diameter / 2)
+	local drawList = imgui.GetWindowDrawList()
+	drawList:AddCircleFilled(center, diameter / 2, u32(APUI.mix(base, over, hover)), 32)
+	local large = kind == 'primary' and APUI.fontLarge
+	if large then imgui.PushFont(APUI.fontLarge) end
+	local size = imgui.CalcTextSize(icon)
+	-- Значок «играть» визуально левее центра: сдвиг на 1/12 диаметра.
+	local nudge = (icon == fa.ICON_FA_PLAY) and diameter / 12 or 0
+	drawList:AddText(V2(center.x - size.x / 2 + nudge, center.y - size.y / 2), u32(textColor), icon)
+	if large then imgui.PopFont() end
+	return pressed
+end
+
+-- Индикатор-эквалайзер: count столбиков в прямоугольнике (x, y, w, h). Пока звук идёт, столбики
+-- двигаются; на паузе замирают; без звука лежат внизу и гаснут.
+local function apDrawEq(drawList, x, y, w, h, kind, count)
+	local C = APUI.colors
+	local dt = imgui.GetIO().DeltaTime
+	if kind == 'playing' then apView.eqT = apView.eqT + dt end
+	local target = APLogic.eqBars(apView.eqT, count)
+	local alive = (kind == 'playing' or kind == 'paused') and 1 or 0
+	local glow = APUI.animate('eq:alive', alive, 6)
+	local gap = 3
+	local barW = (w - gap * (count - 1)) / count
+	for i = 1, count do
+		local value = APUI.animate('eq:' .. i, alive == 1 and target[i] or 0.15, 18)
+		local barH = math.max(3, h * value)
+		local left = x + (i - 1) * (barW + gap)
+		drawList:AddRectFilled(V2(left, y + h - barH), V2(left + barW, y + h),
+			u32(APUI.mix(C.faint, C.accentSoft, glow)), 2)
+	end
+end
+
+-- Карточка «Сейчас играет».
+local function apDrawNowCard(width)
+	local C = APUI.colors
+	local title, kind, status, isRadio = apNowPlaying()
+	local pad, art = 12, 56
+	local eqW, eqH = 46, 28
+	local height = art + pad * 2
+	imgui.PushStyleColor(imgui.Col.ChildWindowBg, C.card)
+	imgui.PushStyleVar(imgui.StyleVar.WindowPadding, V2(pad, pad))
+	imgui.BeginChild('apnow', V2(width, height), false, imgui.WindowFlags.AlwaysUseWindowPadding + imgui.WindowFlags.NoScrollbar)
+		local drawList = imgui.GetWindowDrawList()
+		local pos = imgui.GetCursorScreenPos()
+		-- Обложка: акцентный квадрат со значком станции или трека.
+		imgui.Dummy(V2(art, art))
+		drawList:AddRectFilled(pos, V2(pos.x + art, pos.y + art), u32(C.navActive), 10)
+		drawList:AddRectFilled(V2(pos.x + 4, pos.y + 4), V2(pos.x + art - 4, pos.y + art - 4), u32(withAlpha(C.accent, 0.85)), 8)
+		if APUI.fontLarge then imgui.PushFont(APUI.fontLarge) end
+		local icon = isRadio and fa.ICON_FA_BROADCAST_TOWER or fa.ICON_FA_MUSIC
+		local iconSize = imgui.CalcTextSize(icon)
+		drawList:AddText(V2(pos.x + (art - iconSize.x) / 2, pos.y + (art - iconSize.y) / 2), u32(C.white), icon)
+		if APUI.fontLarge then imgui.PopFont() end
+		-- Название (крупно) и строка состояния справа от обложки, вместе по центру её высоты.
+		local textX = pos.x + art + 14
+		local textW = width - pad * 2 - art - 14 - eqW - 10
+		local largeH = APUI.fontLarge and 21 or imgui.GetTextLineHeight()
+		local lineH = imgui.GetTextLineHeight()
+		local top = pos.y + (art - largeH - 4 - lineH) / 2
+		local titleColor = (kind == 'stopped' and not apRadio.handle and not audioStream) and C.muted or C.white
+		if APUI.fontLarge then imgui.PushFont(APUI.fontLarge) end
+		drawList:AddText(V2(textX, top), u32(titleColor), apFitText(title, textW))
+		if APUI.fontLarge then imgui.PopFont() end
+		local statusColor = C.muted
+		if kind == 'playing' then statusColor = C.accentSoft elseif kind == 'error' then statusColor = C.danger end
+		local dot = kind == 'error' and fa.ICON_FA_EXCLAMATION_CIRCLE or (kind == 'loading' and fa.ICON_FA_CIRCLE_NOTCH or fa.ICON_FA_CIRCLE)
+		drawList:AddText(V2(textX, top + largeH + 4), u32(statusColor), apFitText(dot .. ' ' .. status, textW))
+		-- Эквалайзер у правого края, по центру высоты обложки.
+		local eqX = pos.x + width - pad * 2 - eqW
+		apDrawEq(drawList, eqX, pos.y + (art - eqH) / 2, eqW, eqH, kind, 6)
+	imgui.EndChild()
+	imgui.PopStyleVar()
+	imgui.PopStyleColor()
+end
+
+-- Время трека: «прошло», полоса, «всего». Для радио - метка «Прямой эфир». Перемотки нет: MoonLoader
+-- не даёт ни узнать, ни поменять позицию в потоке трека.
+local function apDrawTimeline(width)
+	local C = APUI.colors
+	local h = imgui.GetTextLineHeight()
+	local pos = imgui.GetCursorScreenPos()
+	imgui.Dummy(V2(width, h))
+	local drawList = imgui.GetWindowDrawList()
+	if apStreamIsTrack and audioStream then
+		local elapsed = apNow.track.elapsed or 0
+		local left = APLogic.formatTime(elapsed)
+		local right = apNow.length and APLogic.formatTime(apNow.length) or '--:--'
+		local leftW, rightW = imgui.CalcTextSize(left).x, imgui.CalcTextSize(right).x
+		local barX0, barX1 = pos.x + leftW + 10, pos.x + width - rightW - 10
+		local barY = pos.y + h / 2
+		drawList:AddText(pos, u32(C.muted), left)
+		drawList:AddText(V2(pos.x + width - rightW, pos.y), u32(C.muted), right)
+		drawList:AddRectFilled(V2(barX0, barY - 2), V2(barX1, barY + 2), u32(C.switchOff), 2)
+		local fraction = APLogic.progress(elapsed, apNow.length)
+		if fraction then
+			local fillX = barX0 + (barX1 - barX0) * APUI.animate('ap:progress', fraction, 10)
+			drawList:AddRectFilled(V2(barX0, barY - 2), V2(fillX, barY + 2), u32(C.accent), 2)
+			drawList:AddCircleFilled(V2(fillX, barY), 5, u32(C.white), 16)
+		end
+	elseif apRadio.handle or apRadio.job or audioStream then
+		local live = fa.ICON_FA_CIRCLE .. u8'  Прямой эфир'
+		local liveW = imgui.CalcTextSize(live).x
+		local playing = apRadio.handle and apRadioState() == 1
+		drawList:AddText(V2(pos.x + (width - liveW) / 2, pos.y), u32(playing and C.danger or C.muted), live)
+	end
+end
+
+-- Громкость своей отрисовки: значок, дорожка, заливка, ручка в ячейке width x h. Тянуть можно, если
+-- нажатие началось на дорожке (не на значке).
+local function apVolume(width, h)
+	local C = APUI.colors
+	local knob = 6
+	local level = APLogic.volumeIcon(volume_player.v)
+	local icon = level == 'off' and fa.ICON_FA_VOLUME_OFF or (level == 'down' and fa.ICON_FA_VOLUME_DOWN or fa.ICON_FA_VOLUME_UP)
+	local iconW = imgui.CalcTextSize(fa.ICON_FA_VOLUME_UP).x
+	local pos = imgui.GetCursorScreenPos()
+	imgui.InvisibleButton('##apvolume', V2(width, h))
+	local active, hovered = imgui.IsItemActive(), imgui.IsItemHovered()
+	local x0, x1 = pos.x + iconW + 8 + knob, pos.x + width - knob
+	local mouseX = imgui.GetMousePos().x
+	if not active then
+		apView.volDrag = false
+	elseif not apView.volDrag and mouseX >= x0 - knob then
+		apView.volDrag = true
+	end
+	if apView.volDrag then
+		local value = APLogic.volumeFromX(mouseX, x0, x1 - x0)
+		if math.abs(value - volume_player.v) > 0.0005 then apSetVolume(value) end
+	end
+	if apVolumeDirty and not imgui.IsMouseDown(0) then
+		apVolumeDirty = false
+		inicfg.save(data, cfgpath)
+	end
+	if hovered then imgui.Hint(u8('Громкость ' .. math.floor(volume_player.v * 100 + 0.5) .. ' %')) end
+	local grow = APUI.animate('ap:volume', (apView.volDrag or hovered) and 1 or 0, 16)
+	local drawList = imgui.GetWindowDrawList()
+	local y = pos.y + h / 2
+	drawList:AddText(V2(pos.x, y - imgui.GetTextLineHeight() / 2), u32(APUI.mix(C.muted, C.text, grow)), icon)
+	local x = x0 + (x1 - x0) * volume_player.v
+	drawList:AddRectFilled(V2(x0, y - 2), V2(x1, y + 2), u32(C.switchOff), 2)
+	drawList:AddRectFilled(V2(x0, y - 2), V2(x, y + 2), u32(APUI.mix(C.accent, C.accentSoft, grow)), 2)
+	drawList:AddCircleFilled(V2(x, y), knob + grow, u32(C.white), 16)
+end
+
+-- Ряд управления: кнопки по центру своей части, громкость справа. Все элементы ряда - одной высоты big.
+local function apDrawControls(width)
+	local gap = imgui.GetStyle().ItemSpacing.x
+	local small, big = APUI.frameHeight() + 4, math.floor(APUI.frameHeight() * 1.6)
+	local volumeW = 140
+	local buttonsW = small * 4 + big + gap * 4
+	local areaW = width - volumeW - gap
+	local rowX = imgui.GetCursorPosX()
+	local tracks = apSourceIsTracks()
+	imgui.SetCursorPosX(rowX + math.max(0, (areaW - buttonsW) / 2))
+	if apRoundButton('repeat', fa.ICON_FA_REDO, small, music_repeat.v and 'on' or 'off', big) then apToggleRepeat() end
+	imgui.Hint(u8(music_repeat.v and 'Повтор трека: включён' or 'Повтор трека: выключен'))
+	imgui.SameLine()
+	if apRoundButton('prev', fa.ICON_FA_STEP_BACKWARD, small, nil, big) then apStep(-1) end
+	imgui.Hint(u8(tracks and 'Предыдущий трек' or 'Предыдущая станция'))
+	imgui.SameLine()
+	if apRoundButton('play', icon_play_pause, big, 'primary') then apTogglePlay() end
+	imgui.Hint(u8'Играть / Пауза')
+	imgui.SameLine()
+	if apRoundButton('next', fa.ICON_FA_STEP_FORWARD, small, nil, big) then apStep(1) end
+	imgui.Hint(u8(tracks and 'Следующий трек' or 'Следующая станция'))
+	imgui.SameLine()
+	if apRoundButton('stop', fa.ICON_FA_STOP, small, nil, big) then
+		apNow.error = nil
+		apStop()
+	end
+	imgui.Hint(u8'Стоп')
+	imgui.SameLine(rowX + width - volumeW)
+	apVolume(volumeW, big)
+end
+
+-- Строка списка: номер или значок играющей, название, звёздочка (для станций). Возвращает нажатие по
+-- строке и по звёздочке.
+local function apListRow(id, i, text, width, active, playing, star)
+	local C = APUI.colors
+	local h = APUI.frameHeight()
+	local pos = imgui.GetCursorScreenPos()
+	local starW = star ~= nil and h or 0
+	local pressed = imgui.InvisibleButton('##' .. id .. i, V2(math.max(1, width - starW), h))
+	local hovered = imgui.IsItemHovered()
+	if hovered then imgui.Hint(text, 0.6) end
+	local starPressed, starHover = false, false
+	if star ~= nil then
+		imgui.SameLine(0, 0)
+		starPressed = imgui.InvisibleButton('##star' .. id .. i, V2(starW, h))
+		starHover = imgui.IsItemHovered()
+		if starHover then imgui.Hint(u8(star and 'Убрать из избранного' or 'В избранное')) end
+	end
+	local glow = APUI.animate('row:' .. id .. i, (hovered or starHover) and 1 or 0, 16)
+	local drawList = imgui.GetWindowDrawList()
+	local corner = V2(pos.x + width, pos.y + h)
+	if active then
+		drawList:AddRectFilled(pos, corner, u32(APUI.mix(C.navActive, C.controlHover, glow * 0.5)), 6)
+		drawList:AddRectFilled(V2(pos.x, pos.y + 6), V2(pos.x + 3, pos.y + h - 6), u32(C.accent), 2)
+	elseif glow > 0.01 then
+		drawList:AddRectFilled(pos, corner, u32(withAlpha(C.control, glow)), 6)
+	end
+	local lineY = pos.y + (h - imgui.GetTextLineHeight()) / 2
+	local mark = active and (playing and fa.ICON_FA_VOLUME_UP or fa.ICON_FA_PAUSE) or tostring(i)
+	local markColor = active and C.accentSoft or C.faint
+	drawList:AddText(V2(pos.x + 10, lineY), u32(markColor), mark)
+	local textX = pos.x + 40
+	local textW = width - 40 - starW - 8
+	drawList:AddText(V2(textX, lineY), u32(active and C.white or APUI.mix(C.text, C.white, glow)), apFitText(text, textW))
+	if star ~= nil then
+		local starIcon = fa.ICON_FA_STAR
+		local starSize = imgui.CalcTextSize(starIcon)
+		local starColor = star and C.accentSoft or (starHover and C.muted or withAlpha(C.faint, 0.6 + 0.4 * glow))
+		drawList:AddText(V2(pos.x + width - starW + (starW - starSize.x) / 2, lineY), u32(starColor), starIcon)
+	end
+	return pressed, starPressed
+end
+
+-- Поле поиска: подсказка «Поиск» внутри пустого поля.
+local function apSearchField(buffer, width)
+	local C = APUI.colors
+	local pos = imgui.GetCursorScreenPos()
+	imgui.PushItemWidth(width)
+		imgui.InputText('##apsearch' .. currentPage, buffer)
+	imgui.PopItemWidth()
+	if buffer.v == '' and not imgui.IsItemActive() then
+		local pad = imgui.GetStyle().FramePadding
+		imgui.GetWindowDrawList():AddText(V2(pos.x + pad.x, pos.y + pad.y), u32(C.faint), fa.ICON_FA_SEARCH .. u8'  Поиск по названию')
+	end
+end
+
+-- Пустой список: приглушённая строка.
+local function apEmpty(text)
+	imgui.Dummy(V2(0, 4))
+	imgui.TextDisabled(text)
+end
+
+-- Список станций или треков в панели высотой height.
+local function apDrawList(width, height)
+	local C = APUI.colors
+	local query = apView.search[currentPage].v
+	imgui.PushStyleColor(imgui.Col.ChildWindowBg, C.field)
+	imgui.PushStyleVar(imgui.StyleVar.WindowPadding, V2(6, 6))
+	imgui.BeginChild('aplist' .. currentPage, V2(width, height), false, imgui.WindowFlags.AlwaysUseWindowPadding)
+		imgui.PushStyleVar(imgui.StyleVar.ItemSpacing, V2(0, 2))
+		local rowW = imgui.GetWindowContentRegionWidth()
+		if currentPage == 1 then
+			local fav = {}
+			for i = 1, #radio_stations do fav[i] = apIsFavorite(i) end
+			local order = APLogic.listOrder(radiolist, query, fav)
+			local stationOn = apRadio.job or apRadio.handle or (audioStream and not apStreamIsTrack)
+			for _, i in ipairs(order) do
+				local active = stationOn and current_radio.v + 1 == i
+				local playing = active and (apRadio.job ~= nil or (apRadio.handle and apRadioState() == 1)
+					or (audioStream ~= nil and getAudioStreamState(audioStream) == 1))
+				local pressed, starPressed = apListRow('st', i, radiolist[i], rowW, active, playing, fav[i])
+				if starPressed then
+					apToggleFavorite(i)
+				elseif pressed then
+					apNow.error = nil
+					apPlayStationAt(i)
+				end
+			end
+			if #order == 0 then apEmpty(u8'Ничего не найдено.') end
+		else
+			if results and results ~= '' then
+				imgui.PushTextWrapPos(0)
+				imgui.TextColored(C.danger, u8(results))
+				imgui.PopTextWrapPos()
+			end
+			if #musics == 0 then
+				imgui.Dummy(V2(0, 4))
+				imgui.TextColored(C.text, u8'В папке нет треков')
+				imgui.PushTextWrapPos(0)
+				imgui.TextColored(C.muted, musicpath.v ~= '' and musicpath.v or u8'Папка не выбрана')
+				imgui.TextColored(C.faint, u8'Укажите папку с файлами mp3 выше и нажмите «Выбор».')
+				imgui.PopTextWrapPos()
+				if APUI.button(fa.ICON_FA_SYNC_ALT .. u8' Обновить список##aprescan') then apScanFolder() end
+			else
+				local names = {}
+				for i, file in ipairs(musics) do names[i] = u8(APLogic.trackTitle(file)) end
+				local order = APLogic.listOrder(names, query)
+				for _, i in ipairs(order) do
+					local active = apStreamIsTrack and audioStream ~= nil and current_music == i
+					local playing = active and getAudioStreamState(audioStream) == 1
+					if apListRow('tr', i, names[i], rowW, active, playing, nil) then apPlayTrackAt(i) end
+				end
+				if #order == 0 then apEmpty(u8'Ничего не найдено.') end
+			end
+		end
+		imgui.PopStyleVar()
+	imgui.EndChild()
+	imgui.PopStyleVar()
+	imgui.PopStyleColor()
+end
+
+-- Строка папки с музыкой: поле и «Выбор» (как раньше).
+local function apDrawFolderRow(width)
+	local spacing = imgui.GetStyle().ItemSpacing.x
+	local selectLabel = fa.ICON_FA_FOLDER_OPEN .. u8' Выбор'
+	imgui.PushItemWidth(width - spacing - APUI.buttonWidth(selectLabel))
+		imgui.InputText('##musicpath', musicpath)
+	imgui.PopItemWidth()
+	imgui.Hint(u8'Папка с музыкой (mp3)')
+	imgui.SameLine()
+	if APUI.button(selectLabel .. '##musicpathselect') then apScanFolder() end
+end
+
+-- Кнопки-значки заголовка справа: клавиша, мини-режим, закрыть. x0 - левый край содержимого.
+local function apHeaderButtons(x0, width, mini)
+	local gap = imgui.GetStyle().ItemSpacing.x
+	local keyIcon, modeIcon, closeIcon = fa.ICON_FA_KEYBOARD, mini and fa.ICON_FA_EXPAND or fa.ICON_FA_COMPRESS, fa.ICON_FA_TIMES
+	local total = APUI.buttonWidth(modeIcon) + APUI.buttonWidth(closeIcon) + gap
+	if not mini then total = total + APUI.buttonWidth(keyIcon) + gap end
+	imgui.SameLine(x0 + width - total)
+	if not mini then
+		if APUI.button(keyIcon .. '##apsettings', apView.settings and 'primary' or nil) then apView.settings = not apView.settings end
+		imgui.Hint(u8'Клавиша окна')
+		imgui.SameLine()
+	end
+	if APUI.button(modeIcon .. '##apmode') then
+		data.window.mini = not mini
+		inicfg.save(data, cfgpath)
+	end
+	imgui.Hint(u8(mini and 'Полное окно' or 'Мини-режим'))
+	imgui.SameLine()
+	if APUI.button(closeIcon .. '##apclose') then apWindow.v = false end
+	imgui.Hint(u8'Закрыть (Esc)')
+end
+
+local function apDrawFull(x0, width)
+	local C = APUI.colors
+	APUI.label(fa.ICON_FA_HEADPHONES, C.accentSoft)
+	imgui.SameLine()
+	APUI.label(u8'Аудиоплеер', C.white)
+	apHeaderButtons(x0, width, false)
+	if apView.settings then apDrawKeyRow() end
+	apDrawNowCard(width)
+	apDrawTimeline(width)
+	apDrawControls(width)
+	imgui.Dummy(V2(0, 2))
+	currentPage = APUI.tabs('apsrc', { fa.ICON_FA_BROADCAST_TOWER .. u8' Радио', fa.ICON_FA_FOLDER_OPEN .. u8' Мои треки' }, currentPage)
+	local rowStep = APUI.frameHeight() + imgui.GetStyle().ItemSpacing.y
+	local listH = LIST_ROWS * (APUI.frameHeight() + 2) + 12
+	if currentPage == 2 then
+		apDrawFolderRow(width)
+	else
+		listH = listH + rowStep -- без строки папки список выше: окно не меняет высоту при смене вкладки
+	end
+	apSearchField(apView.search[currentPage], width)
+	apDrawList(width, listH)
+end
+
+local function apDrawMini(x0, width)
+	local C = APUI.colors
+	local title, kind, status, isRadio = apNowPlaying()
+	local gap = imgui.GetStyle().ItemSpacing.x
+	local small = APUI.frameHeight() + 4
+	local art = small
+	local pos = imgui.GetCursorScreenPos()
+	imgui.Dummy(V2(art, art))
+	local drawList = imgui.GetWindowDrawList()
+	drawList:AddRectFilled(pos, V2(pos.x + art, pos.y + art), u32(withAlpha(C.accent, 0.85)), 8)
+	local icon = isRadio and fa.ICON_FA_BROADCAST_TOWER or fa.ICON_FA_MUSIC
+	local iconSize = imgui.CalcTextSize(icon)
+	drawList:AddText(V2(pos.x + (art - iconSize.x) / 2, pos.y + (art - iconSize.y) / 2), u32(C.white), icon)
+	-- Кнопки справа: предыдущий, играть/пауза, следующий, полное окно, закрыть.
+	local modeW = APUI.buttonWidth(fa.ICON_FA_EXPAND) + APUI.buttonWidth(fa.ICON_FA_TIMES) + gap
+	local buttonsW = small * 3 + gap * 3 + modeW
+	local textW = width - art - gap - buttonsW - gap
+	imgui.SameLine()
+	imgui.BeginGroup()
+		local statusColor = kind == 'playing' and C.accentSoft or (kind == 'error' and C.danger or C.muted)
+		imgui.TextColored(C.white, apFitText(title, textW))
+		imgui.TextColored(statusColor, apFitText(status, textW))
+	imgui.EndGroup()
+	imgui.SameLine(x0 + width - buttonsW)
+	local tracks = apSourceIsTracks()
+	if apRoundButton('mprev', fa.ICON_FA_STEP_BACKWARD, small, nil) then apStep(-1) end
+	imgui.Hint(u8(tracks and 'Предыдущий трек' or 'Предыдущая станция'))
+	imgui.SameLine()
+	if apRoundButton('mplay', icon_play_pause, small, 'primary') then apTogglePlay() end
+	imgui.Hint(u8'Играть / Пауза')
+	imgui.SameLine()
+	if apRoundButton('mnext', fa.ICON_FA_STEP_FORWARD, small, nil) then apStep(1) end
+	imgui.Hint(u8(tracks and 'Следующий трек' or 'Следующая станция'))
+	apHeaderButtons(x0, width, true)
+end
+
+function imgui.OnDrawFrame()
+	APUI.drawToasts()
+	if not apWindow.v or not data then
+		apView.openT = nil
+		return
+	end
+	local mini = data.window.mini == true or data.window.mini == 'true'
+	local width = mini and MINI_W or FULL_W
+	local padX, padY = 18, 16
+	if mini then padX, padY = 12, 10 end
+	local x, y = tonumber(data.window.posX) or -1, tonumber(data.window.posY) or -1
+	if x < 0 or y < 0 or x > resX - 60 or y > resY - 60 then x, y = math.floor((resX - width) / 2), math.floor(resY / 5) end
+	imgui.SetNextWindowPos(imgui.ImVec2(x, y), imgui.Cond.FirstUseEver)
+	-- Появление окна: прозрачность от 0 до 1 за 0.18 с (как у окна SNHelper).
+	apView.openT = math.min(1, (apView.openT or 0) + imgui.GetIO().DeltaTime / 0.18)
+	local t = 1 - apView.openT
+	if APUI.fontBase then imgui.PushFont(APUI.fontBase) end
+	imgui.PushStyleVar(imgui.StyleVar.Alpha, math.max(0.02, 1 - t * t * t))
+	imgui.PushStyleVar(imgui.StyleVar.WindowPadding, imgui.ImVec2(padX, padY))
+	imgui.Begin('##sampaudioplayer', apWindow, imgui.WindowFlags.NoResize + imgui.WindowFlags.NoCollapse + imgui.WindowFlags.NoTitleBar
+		+ imgui.WindowFlags.NoScrollbar + imgui.WindowFlags.AlwaysAutoResize)
+		-- Внутри окна обычный отступ, чтобы отступ окна не достался подсказкам и панелям.
+		imgui.PushStyleVar(imgui.StyleVar.WindowPadding, imgui.ImVec2(12, 12))
+		local pos = imgui.GetWindowPos()
+		apWindowPos = { x = math.floor(pos.x), y = math.floor(pos.y) }
+		if mini then apDrawMini(padX, width) else apDrawFull(padX, width) end
+		imgui.PopStyleVar()
+	imgui.End()
+	imgui.PopStyleVar(2)
+	if APUI.fontBase then imgui.PopFont() end
 end
