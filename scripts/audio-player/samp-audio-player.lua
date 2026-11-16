@@ -27,7 +27,7 @@ APBoot.DEPS = {
 	{ path = 'resource/fonts/fa-solid-900.ttf', size = 202744 },
 }
 
-APBoot.CATALOG_DEP = { path = 'lib/samp-catalog.lua', size = 32110, module = 'samp-catalog', optional = true, minVersion = 2 }
+APBoot.CATALOG_DEP = { path = 'lib/samp-catalog.lua', size = 32695, module = 'samp-catalog', optional = true, minVersion = 3 }
 table.insert(APBoot.DEPS, APBoot.CATALOG_DEP)
 
 APBoot.TOAST_DEP = { path = 'lib/samp-toast.lua', size = 1407, module = 'samp-toast', optional = true, minVersion = 1 }
@@ -150,8 +150,8 @@ if APBOOT_TEST then return APBoot end
 script_name('samp-audio-player')
 script_author('GORYCH')
 script_description('Music player: radio stations and tracks from a folder')
-script_version_number(6)
-script_version('1.5')
+script_version_number(7)
+script_version('1.6')
 
 function APBoot.statePath()
 	return getWorkingDirectory() .. '\\config\\samp-audio-player\\bootstrap.state'
@@ -1430,7 +1430,6 @@ do
 				idPrefix = 'apCat',
 				imageSize = 44,
 				cardPad = 10,
-				helpExtra = { 'Тот же список есть в SNHelper («Другие скрипты»): что установлено здесь, видно и там.' },
 				tabGet = function() return tostring(data.window.catalogTab or 'all') end,
 				tabSet = function(id)
 					data.window.catalogTab = id

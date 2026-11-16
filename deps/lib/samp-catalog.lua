@@ -1,8 +1,10 @@
 -- samp-catalog: каталог скриптов GORYCH для MoonLoader
 local M = {}
 
-M.VERSION = 2
-M.REPO = 'https://raw.githubusercontent.com/egor-pozhitok/samp-scripts/main/'
+M.VERSION = 3
+M.RAW = 'https://raw.githubusercontent.com/egor-pozhitok/samp-scripts/'
+M.REPO = M.RAW .. 'main/'
+M.COMMIT_API = 'https://api.github.com/repos/egor-pozhitok/samp-scripts/commits/main'
 M.STATE_FILE = 'config/SNHelper/catalog.state'
 M.IMAGE_DIR = 'resource/SNHelper/catalog'
 M.OWNERS = { ['snhelper.lua'] = 'snhelper', ['snhelper.luac'] = 'snhelper' }
@@ -261,10 +263,9 @@ function M.helpLines(selfName, extra)
 	local lines = {
 		'Здесь скрипты от GORYCH. Список загружается из интернета при первом открытии раздела, «Обновить список» загружает его заново.',
 		'«Установить» скачивает файлы скрипта в папку moonloader и сразу запускает его. Общие библиотеки (imgui, шрифт значков и другие), которых нет, скачиваются вместе с ним.',
-		'«Обновить» появляется, когда вышла новая версия: файлы заменяются, скрипт перезапускается.'
+		'«Обновить» появляется, когда вышла новая версия: она скачивается и проверяется, прежний файл остаётся рядом с расширением .bak, скрипт перезапускается.'
 			.. (selfName and (' Так же обновляется и сам ' .. selfName .. ' (карточка «этот скрипт»).') or ''),
 		'«Удалить» (нажмите два раза) останавливает скрипт и удаляет его файлы. Общие библиотеки остаются: ими пользуются другие скрипты.',
-		'Новая версия сначала скачивается рядом и проверяется, и только потом заменяет файл; прежний файл остаётся рядом с расширением .bak. Запущенный скрипт после обновления перезапускается.',
 	}
 	for _, line in ipairs(extra or {}) do lines[#lines + 1] = line end
 	for i, line in ipairs(lines) do lines[i] = i .. '. ' .. line end
@@ -278,7 +279,8 @@ function M.new(opts)
 	assert(type(opts) == 'table' and opts.u8 and type(opts.ui) == 'table', 'samp-catalog: opts.u8 and opts.ui are required')
 	local self = setmetatable({}, Catalog)
 	self.opts = opts
-	self.repo = opts.repo or M.REPO
+	self.repo = opts.repo
+	self.base = nil
 	self.timeout = opts.timeout or 15
 	self.tag = opts.tag or '[catalog]'
 	self.idPrefix = opts.idPrefix or 'sc'
@@ -347,7 +349,7 @@ function Catalog:log(text)
 end
 
 function Catalog:fetchUrl(src, path)
-	local url = self.repo .. src .. '?t=' .. os.time()
+	local url = (self.repo or self.base or M.REPO) .. src .. '?t=' .. os.time()
 	if self.opts.download then return self.opts.download(url, path, self.timeout) end
 	return download(url, path, self.timeout)
 end
@@ -488,9 +490,27 @@ function Catalog:fetchImages()
 	end
 end
 
+function Catalog:commitBase()
+	local tmp = full((self.opts.dataDir or 'config/samp-catalog') .. '/commit.json.tmp')
+	ensureDir(tmp)
+	local ok
+	if self.opts.download then
+		ok = self.opts.download(M.COMMIT_API, tmp, self.timeout)
+	else
+		ok = download(M.COMMIT_API, tmp, self.timeout)
+	end
+	local text = readFile(tmp)
+	os.remove(tmp)
+	if not ok or not text then return nil end
+	local sha = text:match('^%s*{%s*"sha"%s*:%s*"(%x+)"')
+	if not sha or #sha ~= 40 then return nil end
+	return M.RAW .. sha:lower() .. '/'
+end
+
 function Catalog:fetchList()
 	local tmp = full((self.opts.dataDir or 'config/samp-catalog') .. '/catalog.json.tmp')
 	ensureDir(tmp)
+	if not self.repo then self.base = self:commitBase() end
 	local ok = self:fetchUrl('scripts.json', tmp)
 	local text = readFile(tmp)
 	os.remove(tmp)
