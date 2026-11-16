@@ -1274,12 +1274,28 @@ function hook.onPlayAudioStream()
 	end
 end
 
+-- Ключи положения окна в ini: у полного окна posX/posY, у мини-плеера свои miniX/miniY.
+function apPosKeys(mini)
+	if mini then return 'miniX', 'miniY' end
+	return 'posX', 'posY'
+end
+
+-- Запомнить положение окна для текущего режима.
 local function apSaveWindowPos()
 	if not data or not apWindowPos then return end
-	if apWindowPos.x ~= tonumber(data.window.posX) or apWindowPos.y ~= tonumber(data.window.posY) then
-		data.window.posX, data.window.posY = apWindowPos.x, apWindowPos.y
+	local kx, ky = apPosKeys(apIsMini())
+	if apWindowPos.x ~= tonumber(data.window[kx]) or apWindowPos.y ~= tonumber(data.window[ky]) then
+		data.window[kx], data.window[ky] = apWindowPos.x, apWindowPos.y
 		inicfg.save(data, cfgpath)
 	end
+end
+
+-- Переключить мини-режим: положение уходящего режима запоминается, курсор остаётся.
+function apSetMini(on)
+	apSaveWindowPos()
+	data.window.mini = on
+	apMiniCursor = true
+	inicfg.save(data, cfgpath)
 end
 
 function onScriptTerminate(script, quitGame)
@@ -1301,6 +1317,8 @@ function main()
 			key = DEFAULT_KEY,
 			posX = -1, -- левый верхний угол окна; -1 - по центру экрана
 			posY = -1,
+			miniX = -1, -- то же для мини-плеера; -1 - там, где было полное окно
+			miniY = -1,
 			mini = false, -- мини-режим: узкая полоска с названием и кнопками
 		},
 	}, cfgpath)
@@ -1764,11 +1782,7 @@ local function apHeaderButtons(x0, width, mini)
 		imgui.Hint(u8'Клавиша окна')
 		imgui.SameLine()
 	end
-	if APUI.button(modeIcon .. '##apmode') then
-		data.window.mini = not mini
-		apMiniCursor = true
-		inicfg.save(data, cfgpath)
-	end
+	if APUI.button(modeIcon .. '##apmode') then apSetMini(not mini) end
 	imgui.Hint(u8(mini and 'Полное окно' or 'Мини-режим'))
 	imgui.SameLine()
 	if APUI.button(closeIcon .. '##apclose') then apWindow.v = false end
@@ -1862,20 +1876,18 @@ local function apDrawMini(x0, width)
 	imgui.Hint(u8(tracks and 'Следующий трек' or 'Следующая станция'))
 	if not withBox then return end
 	imgui.SameLine()
-	if apBoxButton('mexpand', expandIcon, rowH) then
-		data.window.mini = false
-		inicfg.save(data, cfgpath)
-	end
+	if apBoxButton('mexpand', expandIcon, rowH) then apSetMini(false) end
 	imgui.Hint(u8'Полное окно')
 	imgui.SameLine()
 	if apBoxButton('mclose', closeIcon, rowH) then apWindow.v = false end
-	imgui.Hint(u8'Закрыть (Esc)')
+	imgui.Hint(u8'Закрыть')
 end
 
 function imgui.OnDrawFrame()
 	APUI.drawToasts()
 	if not apWindow.v or not data then
 		apView.openT = nil
+		apView.placed = nil
 		return
 	end
 	local mini = data.window.mini == true or data.window.mini == 'true'
@@ -1883,9 +1895,17 @@ function imgui.OnDrawFrame()
 	-- Поля окна одинаковые со всех сторон.
 	local padX, padY = 16, 16
 	if mini then padX, padY = 12, 12 end
-	local x, y = tonumber(data.window.posX) or -1, tonumber(data.window.posY) or -1
-	if x < 0 or y < 0 or x > resX - 60 or y > resY - 60 then x, y = math.floor((resX - width) / 2), math.floor(resY / 5) end
-	imgui.SetNextWindowPos(imgui.ImVec2(x, y), imgui.Cond.FirstUseEver)
+	-- У полного окна и мини-плеера свои положения. Окно ставится на место при открытии и при смене
+	-- режима, дальше его двигает игрок. Мини-плеер в первый раз появляется там, где было полное окно.
+	local mode = mini and 'mini' or 'full'
+	if apView.placed ~= mode then
+		local kx, ky = apPosKeys(mini)
+		local x, y = tonumber(data.window[kx]) or -1, tonumber(data.window[ky]) or -1
+		if mini and (x < 0 or y < 0) and apWindowPos then x, y = apWindowPos.x, apWindowPos.y end
+		if x < 0 or y < 0 or x > resX - 60 or y > resY - 60 then x, y = math.floor((resX - width) / 2), math.floor(resY / 5) end
+		imgui.SetNextWindowPos(imgui.ImVec2(x, y), imgui.Cond.Always)
+		apView.placed = mode
+	end
 	-- Появление окна: прозрачность от 0 до 1 за 0.18 с (как у окна SNHelper).
 	apView.openT = math.min(1, (apView.openT or 0) + imgui.GetIO().DeltaTime / 0.18)
 	local t = 1 - apView.openT

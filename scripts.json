@@ -10,7 +10,7 @@
       "image": "images/audio-player.png",
       "main": "samp-audio-player.lua",
       "files": [
-        { "path": "samp-audio-player.lua", "size": 75481, "src": "scripts/audio-player/samp-audio-player.lua" }
+        { "path": "samp-audio-player.lua", "size": 76369, "src": "scripts/audio-player/samp-audio-player.lua" }
       ],
       "deps": [
         { "path": "lib/imgui.lua", "size": 114068, "src": "deps/lib/imgui.lua" },
