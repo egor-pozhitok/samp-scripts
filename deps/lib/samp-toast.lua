@@ -26,7 +26,7 @@ local function send(text, opts)
 	if exports == nil then return false end
 	local api = exports.api and exports.api()
 	if type(api) ~= 'number' or api < T.API then return false end
-	return exports.push(tostring(text), tonumber(opts.seconds) or 4, opts.kind, opts.key, opts.sender) == true
+	return exports.push(tostring(text), tonumber(opts.seconds) or 4, opts.kind, opts.key, opts.sender, tonumber(opts.scale) or 1) == true
 end
 
 function T.notify(text, opts)

@@ -6,11 +6,11 @@ STLogic.MAX_QUEUE = 12
 STLogic.MAX_VISIBLE = 3
 STLogic.KINDS = { success = true, error = true }
 
-function STLogic.sanitize(text, seconds, kind, key, sender)
+function STLogic.sanitize(text, seconds, kind, key, sender, scale)
 	if type(text) ~= 'string' then return nil end
 	text = text:gsub('%s+$', '')
 	if text == '' then return nil end
-	if #text > 600 then text = text:sub(1, 600) end
+	if #text > 2000 then text = text:sub(1, 2000) end
 	seconds = tonumber(seconds) or 4
 	if seconds ~= seconds then seconds = 4 end
 	seconds = math.max(1, math.min(30, seconds))
@@ -18,7 +18,10 @@ function STLogic.sanitize(text, seconds, kind, key, sender)
 	if type(key) ~= 'string' or key == '' or #key > 60 then key = nil end
 	if type(sender) ~= 'string' then sender = '' end
 	sender = sender:gsub('[%c]', ''):sub(1, 32)
-	return { text = text, seconds = seconds, kind = kind, key = key, sender = sender }
+	scale = tonumber(scale) or 1
+	if scale ~= scale then scale = 1 end
+	scale = math.max(0.5, math.min(3, scale))
+	return { text = text, seconds = seconds, kind = kind, key = key, sender = sender, scale = scale }
 end
 
 function STLogic.toastUpdate(queue, now, maxVisible)
@@ -40,7 +43,7 @@ end
 function STLogic.toastPush(queue, item, now, maxQueue)
 	for _, old in ipairs(queue) do
 		if old.sender == item.sender and ((item.key and old.key == item.key) or (not item.key and old.text == item.text)) then
-			old.text, old.kind, old.seconds = item.text, item.kind, item.seconds
+			old.text, old.kind, old.seconds, old.scale = item.text, item.kind, item.seconds, item.scale
 			if old.startAt then old.startAt = now - math.min(now - old.startAt, 0.2) end
 			return old
 		end
@@ -74,9 +77,9 @@ function EXPORTS.api()
 	return STLogic.API
 end
 
-function EXPORTS.push(text, seconds, kind, key, sender)
+function EXPORTS.push(text, seconds, kind, key, sender, scale)
 	if not ready then return false end
-	local item = STLogic.sanitize(text, seconds, kind, key, sender)
+	local item = STLogic.sanitize(text, seconds, kind, key, sender, scale)
 	if not item then return false end
 	STLogic.toastPush(queue, item, os.clock(), STLogic.MAX_QUEUE)
 	return true
@@ -121,13 +124,14 @@ local function drawToasts()
 	imgui.PushStyleVar(imgui.StyleVar.WindowPadding, V2(padX, padY))
 	imgui.PushStyleColor(imgui.Col.WindowBg, C.window)
 	if fontBase then imgui.PushFont(fontBase) end
-	local fontSize = imgui.GetFontSize()
-	local width = math.floor(fontSize * 17)
+	local baseSize = imgui.GetFontSize()
 	local textX = padX + bar + 6
-	local wrap = width - textX - padX
 	local y = resY - margin
 	for i, entry in ipairs(shown) do
 		local item = entry.item
+		local fontSize = baseSize * item.scale
+		local width = math.floor(fontSize * 17)
+		local wrap = width - textX - padX
 		local text = u8(item.text)
 		local sender = item.sender ~= '' and u8(item.sender) or nil
 		local textH = imgui.GetFont():CalcTextSizeA(fontSize, 10000, wrap, text).y
@@ -138,6 +142,7 @@ local function drawToasts()
 		imgui.SetNextWindowSize(V2(width, h), imgui.Cond.Always)
 		imgui.PushStyleVar(imgui.StyleVar.Alpha, entry.alpha)
 		imgui.Begin('##samptoast' .. i, nil, flags)
+			imgui.SetWindowFontScale(item.scale)
 			local pos = imgui.GetWindowPos()
 			local barColor = item.kind == 'success' and C.success or item.kind == 'error' and C.danger or C.accent
 			imgui.GetWindowDrawList():AddRectFilled(V2(pos.x + padX, pos.y + padY), V2(pos.x + padX + bar, pos.y + h - padY), imgui.GetColorU32(barColor), 1)

@@ -30,8 +30,8 @@ APBoot.DEPS = {
 APBoot.CATALOG_DEP = { path = 'lib/samp-catalog.lua', size = 22568, module = 'samp-catalog', optional = true, minVersion = 1 }
 table.insert(APBoot.DEPS, APBoot.CATALOG_DEP)
 
-APBoot.TOAST_DEP = { path = 'lib/samp-toast.lua', size = 1380, module = 'samp-toast', optional = true, minVersion = 1 }
-APBoot.NOTIFIER_DEP = { path = 'samp-notifier.lua', size = 5861, optional = true, start = true, marker = "script_name('samp-notifier')" }
+APBoot.TOAST_DEP = { path = 'lib/samp-toast.lua', size = 1407, module = 'samp-toast', optional = true, minVersion = 1 }
+APBoot.NOTIFIER_DEP = { path = 'samp-notifier.lua', size = 6116, optional = true, start = true, marker = "script_name('samp-notifier')" }
 table.insert(APBoot.DEPS, APBoot.TOAST_DEP)
 table.insert(APBoot.DEPS, APBoot.NOTIFIER_DEP)
 

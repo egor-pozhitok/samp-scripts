@@ -32,8 +32,8 @@
         { "path": "lib/samp/events/utils.lua", "size": 1385, "src": "deps/lib/samp/events/utils.lua" },
         { "path": "resource/fonts/fa-solid-900.ttf", "size": 202744, "src": "deps/resource/fonts/fa-solid-900.ttf" },
         { "path": "lib/samp-catalog.lua", "size": 22568, "src": "deps/lib/samp-catalog.lua" },
-        { "path": "lib/samp-toast.lua", "size": 1380, "src": "deps/lib/samp-toast.lua" },
-        { "path": "samp-notifier.lua", "size": 5861, "src": "deps/samp-notifier.lua" }
+        { "path": "lib/samp-toast.lua", "size": 1407, "src": "deps/lib/samp-toast.lua" },
+        { "path": "samp-notifier.lua", "size": 6116, "src": "deps/samp-notifier.lua" }
       ]
     }
   ]
