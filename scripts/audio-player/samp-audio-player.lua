@@ -105,8 +105,8 @@ if APBOOT_TEST then return APBoot end
 script_name('samp-audio-player')
 script_author('GORYCH')
 script_description('Music player: radio stations and tracks from a folder')
-script_version_number(2)
-script_version('1.1')
+script_version_number(3)
+script_version('1.2')
 
 function APBoot.ensureDir(filePath)
 	local dir = filePath:match('^(.*)[/\\][^/\\]+$')
@@ -393,11 +393,206 @@ function APLogic.wrapIndex(i, step, n)
 	return (i - 1 + step) % n + 1
 end
 
+function APLogic.isPending(state, id, now, window)
+	return state.id == id and now - state.time <= window
+end
+
+function APLogic.confirmPress(state, id, now, window)
+	if APLogic.isPending(state, id, now, window) then
+		state.id = nil
+		return true
+	end
+	state.id, state.time = id, now
+	return false
+end
+
+-- Каталог «Другие скрипты» (src/catalog.lua). Пути в каталоге - относительно папки moonloader игры (path)
+-- и относительно корня репозитория samp-scripts (src, image). Тексты каталога в UTF-8.
+
+-- Путь безопасен: латиница, цифры, '-', '_', '.', '/' между частями; без '..', '.', пустых частей,
+-- ведущего '/', обратной косой, двоеточия (диск, потоки NTFS), точки в конце части и имён устройств Windows.
+local CAT_DEVICES = { con = true, prn = true, aux = true, nul = true }
+function APLogic.catSafePath(path)
+	if type(path) ~= 'string' or #path == 0 or #path > 200 then return false end
+	if not path:match('^[%w%-%._/]+$') or path:sub(1, 1) == '/' then return false end
+	for part in (path .. '/'):gmatch('(.-)/') do
+		if part == '' or part == '.' or part == '..' or part:sub(-1) == '.' then return false end
+		local base = part:match('^[^.]*'):lower()
+		if CAT_DEVICES[base] or base:match('^com%d$') or base:match('^lpt%d$') then return false end
+	end
+	return true
+end
+
+-- Путь для сравнения: строчные буквы, прямые косые.
+function APLogic.catNormPath(path)
+	return (tostring(path):gsub('\\', '/'):lower())
+end
+
+local CAT_MAX_SIZE = 50 * 1024 * 1024
+local CAT_MAX_FILES = 64
+
+local function catFileList(list, check)
+	if list == nil then return {} end
+	if type(list) ~= 'table' or #list > CAT_MAX_FILES then return nil end
+	local out, seen = {}, {}
+	for i, f in ipairs(list) do
+		if type(f) ~= 'table' or not APLogic.catSafePath(f.path) or not APLogic.catSafePath(f.src) then return nil end
+		local size = tonumber(f.size)
+		if not size or size <= 0 or size > CAT_MAX_SIZE or size ~= math.floor(size) then return nil end
+		local key = APLogic.catNormPath(f.path)
+		if seen[key] or not check(key) then return nil end
+		seen[key] = true
+		out[i] = { path = f.path, size = size, src = f.src }
+	end
+	return out
+end
+
+-- Одна запись каталога или nil, если в ней ошибка.
+local function catEntry(e, selfSet, shared)
+	if type(e) ~= 'table' then return nil end
+	if type(e.id) ~= 'string' or #e.id > 40 or not e.id:match('^[a-z0-9][a-z0-9_%-]*$') then return nil end
+	if type(e.name) ~= 'string' or e.name:match('^%s*$') or #e.name > 100 then return nil end
+	if e.description ~= nil and type(e.description) ~= 'string' then return nil end
+	if type(e.version) ~= 'string' or e.version == '' or #e.version > 20 then return nil end
+	local num = tonumber(e.version_num)
+	if not num or num < 0 or num ~= math.floor(num) then return nil end
+	if e.image ~= nil and (not APLogic.catSafePath(e.image) or not e.image:lower():match('%.png$')) then return nil end
+	if not APLogic.catSafePath(e.main) or e.main:find('/', 1, true) or not (e.main:lower():match('%.lua$') or e.main:lower():match('%.luac$')) then return nil end
+	local mainKey = APLogic.catNormPath(e.main)
+	if selfSet[mainKey] or shared[mainKey] then return nil end
+	-- Свои файлы скрипта не могут заменить ни SNHelper, ни общие файлы зависимостей SNHelper.
+	local files = catFileList(e.files, function(key) return not selfSet[key] and not shared[key] end)
+	if not files then return nil end
+	local own, hasMain = {}, false
+	for _, f in ipairs(files) do
+		local key = APLogic.catNormPath(f.path)
+		own[key] = true
+		if key == mainKey then hasMain = true end
+	end
+	if not hasMain then return nil end
+	-- Общие файлы (deps) могут совпадать с зависимостями SNHelper (тогда их только докачивают), но не с SNHelper и не со своими файлами.
+	local deps = catFileList(e.deps, function(key) return not selfSet[key] and not own[key] end)
+	if not deps then return nil end
+	return {
+		id = e.id, name = e.name, description = e.description or '', version = e.version, version_num = num,
+		image = e.image, main = e.main, files = files, deps = deps,
+	}
+end
+
+-- Разобрать каталог (таблица из decodeJson). selfSet и shared - множества нормализованных путей (catNormPath):
+-- сам SNHelper и общие зависимости. Возвращает список скриптов и число пропущенных записей с ошибкой
+-- либо nil и причину, если сам каталог не того формата.
+function APLogic.catParse(info, selfSet, shared)
+	if type(info) ~= 'table' then return nil, 'не каталог' end
+	if tonumber(info.format) ~= 1 then return nil, 'формат каталога не поддерживается' end
+	if type(info.scripts) ~= 'table' then return nil, 'в каталоге нет списка скриптов' end
+	local list, seen, skipped = {}, {}, 0
+	for _, e in ipairs(info.scripts) do
+		local entry = catEntry(e, selfSet, shared)
+		if entry and not seen[entry.id] then
+			seen[entry.id] = true
+			list[#list + 1] = entry
+		else
+			skipped = skipped + 1
+		end
+	end
+	return list, skipped
+end
+
+-- Действие для карточки: installed - номер установленной версии или nil, если скрипта нет.
+function APLogic.catAction(entry, installed)
+	if installed == nil then return 'install' end
+	if entry.version_num > installed then return 'update' end
+	return 'remove'
+end
+
+-- Файл состояния установленных скриптов: строки «id=version_num».
+function APLogic.catStateParse(text)
+	local state = {}
+	for line in (tostring(text or '') .. '\n'):gmatch('(.-)\n') do
+		local id, num = line:gsub('\r', ''):match('^([%w_%-]+)=(%d+)$')
+		if id then state[id] = tonumber(num) end
+	end
+	return state
+end
+
+function APLogic.catStateText(state)
+	local ids = {}
+	for id in pairs(state) do ids[#ids + 1] = id end
+	table.sort(ids)
+	local out = {}
+	for i, id in ipairs(ids) do out[i] = id .. '=' .. state[id] .. '\n' end
+	return table.concat(out)
+end
+
+-- Что скачать при установке или обновлении: все свои файлы; общие - если их нет (или пустые) или другой
+-- размер, но общий файл SNHelper (shared) с другим размером не трогаем: это рабочая версия для других скриптов.
+-- sizeOf(path) - размер файла на диске или nil.
+function APLogic.catPlan(entry, sizeOf, shared)
+	local plan = {}
+	for _, f in ipairs(entry.files) do plan[#plan + 1] = f end
+	for _, d in ipairs(entry.deps) do
+		local size = sizeOf(d.path)
+		if size == nil or size == 0 or (size ~= d.size and not shared[APLogic.catNormPath(d.path)]) then
+			plan[#plan + 1] = d
+		end
+	end
+	return plan
+end
+
+-- Что удалить: главный файл и свои файлы скрипта; общие файлы (deps), SNHelper и его зависимости - никогда.
+function APLogic.catRemoveList(entry, selfSet, shared)
+	local deps, seen, out = {}, {}, {}
+	for _, d in ipairs(entry.deps) do deps[APLogic.catNormPath(d.path)] = true end
+	local function add(path)
+		local key = APLogic.catNormPath(path)
+		if seen[key] or deps[key] or selfSet[key] or shared[key] then return end
+		seen[key] = true
+		out[#out + 1] = path
+	end
+	add(entry.main)
+	for _, f in ipairs(entry.files) do add(f.path) end
+	return out
+end
+
+-- Состояние списка: idle (не открывали), loading, ready, empty, error.
+-- События: open (первое открытие вкладки), refresh (кнопка), loaded (count скриптов), failed.
+function APLogic.catNext(status, event, count)
+	if event == 'open' then return status == 'idle' and 'loading' or status end
+	if event == 'refresh' then return 'loading' end
+	if status ~= 'loading' then return status end
+	if event == 'loaded' then return (tonumber(count) or 0) > 0 and 'ready' or 'empty' end
+	if event == 'failed' then return 'error' end
+	return status
+end
+
+-- Скачанная картинка - PNG (а не страница ошибки).
+function APLogic.catIsPng(head)
+	return type(head) == 'string' and head:sub(1, 8) == '\137PNG\r\n\26\n'
+end
+
+-- Действие для карточки самого плеера: «Обновить», если в каталоге версия новее запущенной, иначе
+-- только пометка «этот скрипт» (удалять себя из своего же окна нельзя).
+function APLogic.catSelfAction(entry, runningNum)
+	if entry.version_num > (tonumber(runningNum) or 0) then return 'update' end
+	return 'self'
+end
+
+-- Новый текст общего файла состояния: запись id меняется (num = nil - удаляется), чужие строки
+-- остаются. text - то, что лежит в файле прямо сейчас (его перечитывают перед каждой записью:
+-- SNHelper пишет в тот же файл).
+function APLogic.catStateUpdate(text, id, num)
+	local state = APLogic.catStateParse(text)
+	state[id] = num
+	return APLogic.catStateText(state)
+end
+
 if APLOGIC_TEST then return APLogic end
 -- Тема и элементы интерфейса - часть ui.lua из SNHelper (те же цвета и кнопки), без лишних элементов.
 local APUI = { animations = true, fontBase = nil, fontLarge = nil }
 do
 	local imgui = require 'imgui'
+	local fa = require 'fAwesome5'
 	local u8 = require('encoding').UTF8
 	local V2, V4 = imgui.ImVec2, imgui.ImVec4
 
@@ -550,6 +745,48 @@ do
 		if APUI.fontLarge then imgui.PushFont(APUI.fontLarge) end
 		imgui.TextColored(C.white, text)
 		if APUI.fontLarge then imgui.PopFont() end
+	end
+
+	local CONFIRM_SECONDS = 3
+	local confirm = { id = nil, time = 0 }
+	-- Опасная кнопка: первое нажатие меняет подпись на «Точно?», второе в течение CONFIRM_SECONDS подтверждает.
+	function APUI.dangerButton(id, label, size)
+		local now = os.time()
+		local pending = APLogic.isPending(confirm, id, now, CONFIRM_SECONDS)
+		local pressed = APUI.button((pending and u8'Точно?' or label) .. '##danger' .. id, pending and 'danger' or 'dangerText', size, 'danger:' .. id)
+		if pressed then
+			return APLogic.confirmPress(confirm, id, now, CONFIRM_SECONDS)
+		end
+		return false
+	end
+
+	-- Ширина опасной кнопки, в которую помещается и подпись, и «Точно?».
+	function APUI.dangerButtonWidth(label)
+		return math.max(APUI.buttonWidth(label), APUI.buttonWidth(u8'Точно?'))
+	end
+
+	-- Сворачиваемая справка («Как проводить») вверху вкладки: строка-заголовок на всю ширину и, если
+	-- раскрыта, строки lines с переносом по ширине панели. Тексты в UTF-8. Возвращает новое состояние open.
+	function APUI.helpBlock(id, title, lines, open)
+		local w, h = imgui.GetWindowContentRegionWidth(), APUI.frameHeight()
+		local pos = imgui.GetCursorScreenPos()
+		if imgui.InvisibleButton('##help' .. id, V2(math.max(1, w), h)) then open = not open end
+		local hover = APUI.animate('help:' .. id, imgui.IsItemHovered() and 1 or 0, 16)
+		local label = fa.ICON_FA_QUESTION_CIRCLE .. ' ' .. title
+		local icon = open and fa.ICON_FA_CHEVRON_DOWN or fa.ICON_FA_CHEVRON_RIGHT
+		local pad = imgui.GetStyle().FramePadding
+		local textY = pos.y + (h - imgui.GetTextLineHeight()) / 2
+		local drawList = imgui.GetWindowDrawList()
+		drawList:AddRectFilled(pos, V2(pos.x + w, pos.y + h), u32(APUI.mix(C.card, C.control, hover)), imgui.GetStyle().FrameRounding)
+		drawList:AddText(V2(pos.x + pad.x, textY), u32(C.accentSoft), label)
+		drawList:AddText(V2(pos.x + w - pad.x - imgui.CalcTextSize(icon).x, textY), u32(C.muted), icon)
+		if open then
+			imgui.PushTextWrapPos(0)
+			for _, line in ipairs(lines) do imgui.TextColored(C.muted, line) end
+			imgui.PopTextWrapPos()
+			imgui.Dummy(V2(0, 2))
+		end
+		return open
 	end
 
 	-- Уведомления в правом нижнем углу.
@@ -1320,6 +1557,7 @@ function main()
 			miniX = -1, -- то же для мини-плеера; -1 - там, где было полное окно
 			miniY = -1,
 			mini = false, -- мини-режим: узкая полоска с названием и кнопками
+			catalogHelp = false, -- справка раздела «Скрипты» раскрыта
 		},
 	}, cfgpath)
 	music_repeat.v = data.music.rep == true or data.music.rep == 'true'
@@ -1362,6 +1600,448 @@ function main()
 			apSaveWindowPos()
 		end
 		wasOpen = apWindow.v
+	end
+end
+-- Раздел «Скрипты»: каталог скриптов из репозитория samp-scripts, тот же, что «Другие скрипты» в SNHelper.
+-- Файл идёт в склейке после main.lua: imgui, fa, u8, APUI, APLogic, APBoot и apFitText оттуда видны.
+-- Каталог (scripts.json) и его тексты - в UTF-8: в ImGui они идут как есть, в уведомления (CP1251) -
+-- через u8:decode. Вся сеть - в lua_thread через APBoot.download: игра не ждёт, ожидание прерывается,
+-- если сервер молчит дольше TIMEOUT секунд.
+--
+-- Общие с SNHelper файлы (оба скрипта ведут их одинаково):
+--   config/SNHelper/catalog.state - установленные версии, строки «id=version_num». Перед каждой записью
+--     файл перечитывается и меняется только своя строка (APLogic.catStateUpdate): SNHelper может писать
+--     в него в то же время. Установлен ли скрипт, решает наличие его главного файла на диске.
+--   resource/SNHelper/catalog/<id>.png - картинки карточек: скачанную одним скриптом второй не качает.
+--
+-- Карточка самого плеера: пометка «этот скрипт»; если в каталоге версия новее запущенной - «Обновить»:
+-- файлы скачиваются во временные, сверяются по размеру, заменяются, и плеер перезагружает себя.
+
+apCat = { status = 'idle', list = {}, skipped = 0, err = nil, busy = nil, progress = nil, installed = {}, images = {}, textures = {} }
+
+-- Справка раздела (CP1251).
+local AP_CATALOG_HELP = {
+	'1. Здесь скрипты от GORYCH. Список загружается из интернета при первом открытии раздела, «Обновить список» загружает его заново.',
+	'2. «Установить» скачивает файлы скрипта в папку moonloader и сразу запускает его. Общие библиотеки (imgui, шрифт значков и другие), которых нет, скачиваются вместе с ним.',
+	'3. «Обновить» появляется, когда вышла новая версия: файлы заменяются, скрипт перезапускается. Так же обновляется и сам плеер (карточка «этот скрипт»).',
+	'4. «Удалить» (нажмите два раза) останавливает скрипт и удаляет его файлы. Общие библиотеки остаются: ими пользуются другие скрипты.',
+	'5. Тот же список есть в SNHelper («Другие скрипты»): что установлено здесь, видно и там.',
+}
+
+do
+	local REPO = 'https://raw.githubusercontent.com/egor-pozhitok/samp-scripts/main/'
+	local TIMEOUT = 15
+	local V2 = imgui.ImVec2
+	local helpU8 = nil
+
+	local function full(path)
+		return getWorkingDirectory() .. '\\' .. (path:gsub('/', '\\'))
+	end
+
+	local function statePath()
+		return getWorkingDirectory() .. '\\config\\SNHelper\\catalog.state'
+	end
+
+	local function readFile(path)
+		local f = io.open(path, 'rb')
+		if not f then return nil end
+		local text = f:read('*a')
+		f:close()
+		return text
+	end
+
+	local function readState()
+		return APLogic.catStateParse(readFile(statePath()) or '')
+	end
+
+	-- Записать версию id (nil - убрать запись), не трогая чужие строки: файл перечитывается прямо перед записью.
+	local function setState(id, num)
+		APBoot.ensureDir(statePath())
+		local text = APLogic.catStateUpdate(readFile(statePath()) or '', id, num)
+		local f = io.open(statePath(), 'w')
+		if not f then return false end
+		f:write(text)
+		f:close()
+		return true
+	end
+
+	-- Имя файла самого плеера в папке moonloader (нормализованное).
+	local function ownName()
+		return APLogic.catNormPath(tostring(thisScript().path):match('[^\\/]+$') or '')
+	end
+
+	local function isSelf(entry)
+		return APLogic.catNormPath(entry.main) == ownName()
+	end
+
+	-- Что скрипт каталога не может заменить или удалить: SNHelper и общие библиотеки (APBoot.DEPS).
+	-- Сам плеер в этот список не входит: его карточка - это его обновление.
+	local function protectSets()
+		local selfSet = { ['snhelper.lua'] = true, ['snhelper.luac'] = true }
+		local shared = {}
+		for _, dep in ipairs(APBoot.DEPS) do shared[APLogic.catNormPath(dep.path)] = true end
+		return selfSet, shared
+	end
+
+	local function refreshInstalled()
+		local state = readState()
+		local installed = {}
+		for _, entry in ipairs(apCat.list) do
+			if doesFileExist(full(entry.main)) then installed[entry.id] = state[entry.id] or 0 end
+		end
+		apCat.installed = installed
+		apCat.checkedAt = os.clock()
+	end
+
+	local function download(src, path)
+		return APBoot.download(REPO .. src .. '?t=' .. os.time(), path, nil, nil, TIMEOUT)
+	end
+
+	-- Картинка скачивается один раз в общий с SNHelper кэш; не PNG - не сохраняется.
+	local function fetchImages()
+		for _, entry in ipairs(apCat.list) do
+			if entry.image then
+				local final = full('resource/SNHelper/catalog/' .. entry.id .. '.png')
+				if not doesFileExist(final) then
+					local tmp = final .. '.tmp'
+					APBoot.ensureDir(final)
+					if download(entry.image, tmp) and APLogic.catIsPng((readFile(tmp) or ''):sub(1, 8)) then
+						os.remove(final)
+						os.rename(tmp, final)
+					end
+					os.remove(tmp)
+				end
+				if doesFileExist(final) then apCat.images[entry.id] = final end
+			end
+		end
+	end
+
+	local function fetchList()
+		local tmp = getWorkingDirectory() .. '\\config\\samp-audio-player\\catalog.json.tmp'
+		APBoot.ensureDir(tmp)
+		local ok = download('scripts.json', tmp)
+		local text = readFile(tmp)
+		os.remove(tmp)
+		if not ok or not text then return nil, 'сервер не ответил' end
+		text = text:gsub('^\239\187\191', '')
+		-- Ответ вида «404: Not Found» не передаём в decodeJson: он пишет исключение в лог.
+		if not text:match('^%s*{') then return nil, 'каталог не найден' end
+		local okJson, info = pcall(decodeJson, text)
+		if not okJson or type(info) ~= 'table' then return nil, 'каталог повреждён' end
+		local selfSet, shared = protectSets()
+		return APLogic.catParse(info, selfSet, shared)
+	end
+
+	-- event: 'open' (первое открытие раздела) или 'refresh' (кнопка).
+	function apCatFetch(event)
+		if apCat.busy then return end
+		local status = APLogic.catNext(apCat.status, event)
+		if status ~= 'loading' or apCat.status == 'loading' then return end
+		apCat.status = status
+		apCat.busy = 'list'
+		lua_thread.create(function()
+			local ok, list, extra = pcall(fetchList)
+			if ok and list then
+				apCat.list, apCat.skipped, apCat.err = list, extra or 0, nil
+				apCat.status = APLogic.catNext(apCat.status, 'loaded', #list)
+				refreshInstalled()
+				pcall(fetchImages)
+			else
+				if not ok then print('[AudioPlayer] catalog: ' .. tostring(list)) end
+				apCat.err = ok and extra or 'ошибка скрипта'
+				apCat.status = APLogic.catNext(apCat.status, 'failed')
+			end
+			apCat.busy = nil
+		end)
+	end
+
+	local function findRunning(path)
+		local key = APLogic.catNormPath(path)
+		for _, s in ipairs(script.list()) do
+			if APLogic.catNormPath(s.path) == key then return s end
+		end
+		return nil
+	end
+
+	-- Скачать файлы записи: всё во временные файлы со сверкой размера, заменить только после этого.
+	local function fetchFiles(entry)
+		local _, shared = protectSets()
+		local plan = APLogic.catPlan(entry, function(p) return APBoot.fileSize(full(p)) end, shared)
+		apCat.progress = { done = 0, total = #plan }
+		local ready = {}
+		for i, f in ipairs(plan) do
+			local final = full(f.path)
+			local tmp = final .. '.tmp'
+			APBoot.ensureDir(final)
+			if not download(f.src, tmp) or APBoot.fileSize(tmp) ~= f.size then
+				os.remove(tmp)
+				for _, r in ipairs(ready) do os.remove(r.tmp) end
+				return false, 'не скачался файл ' .. f.path
+			end
+			ready[#ready + 1] = { tmp = tmp, final = final, size = f.size }
+			apCat.progress.done = i
+		end
+		for _, r in ipairs(ready) do
+			if not APBoot.acceptDownload(r.tmp, r.final, r.size) then
+				os.remove(r.tmp)
+				return false, 'не удалось записать ' .. r.final
+			end
+		end
+		return true
+	end
+
+	local function install(entry)
+		local ok, err = fetchFiles(entry)
+		if not ok then return false, err end
+		setState(entry.id, entry.version_num)
+		local path = full(entry.main)
+		local running = findRunning(path)
+		local started
+		if running then
+			started = pcall(running.reload, running)
+		else
+			local okLoad, s = pcall(script.load, path)
+			started = okLoad and s ~= nil
+		end
+		return true, started
+	end
+
+	-- Обновление самого плеера: файлы заменены - перезагрузка. Уведомление пишется в чат: окно старой
+	-- версии закроется вместе с ней.
+	local function updateSelf(entry)
+		local ok, err = fetchFiles(entry)
+		if not ok then return false, err end
+		setState(entry.id, entry.version_num)
+		sampAddChatMessage('Audio Player | {FFFFFF}Обновление ' .. entry.version .. ' установлено, перезапускаю плеер.', 0xC0C0C0)
+		thisScript():reload()
+		return true
+	end
+
+	local function remove(entry)
+		local running = findRunning(full(entry.main))
+		if running then
+			pcall(running.unload, running)
+			wait(200)
+		end
+		local selfSet, shared = protectSets()
+		for _, path in ipairs(APLogic.catRemoveList(entry, selfSet, shared)) do
+			os.remove(full(path))
+		end
+		setState(entry.id, nil)
+		return not doesFileExist(full(entry.main))
+	end
+
+	-- kind: 'install' (и обновление), 'self' (обновление плеера) или 'remove'.
+	local function runJob(entry, kind)
+		if apCat.busy then
+			APUI.notify('Подождите: идёт загрузка.', 3)
+			return
+		end
+		apCat.busy = entry.id
+		apCat.busyKind = kind
+		local name = u8:decode(entry.name)
+		lua_thread.create(function()
+			if kind == 'remove' then
+				local ok, removed = pcall(remove, entry)
+				if not ok then print('[AudioPlayer] catalog: ' .. tostring(removed)) end
+				if ok and removed then
+					APUI.notify('Скрипт ' .. name .. ' удалён.', 4)
+				else
+					APUI.notify('Не удалось удалить скрипт ' .. name .. '.\nУдалите файл moonloader/' .. entry.main .. ' вручную.', 6)
+				end
+			elseif kind == 'self' then
+				local ok, done, extra = pcall(updateSelf, entry)
+				if not ok then print('[AudioPlayer] catalog: ' .. tostring(done)) end
+				-- При успехе плеер уже перезагружается; сообщение - только если обновить не вышло.
+				if not (ok and done) then
+					APUI.notify('Не удалось обновить плеер:\n' .. tostring(ok and extra or 'ошибка скрипта') .. '.\nПопробуйте позже.', 6)
+				end
+			else
+				local ok, done, extra = pcall(install, entry)
+				if not ok then print('[AudioPlayer] catalog: ' .. tostring(done)) end
+				if ok and done then
+					if extra then
+						APUI.notify('Скрипт ' .. name .. ' ' .. entry.version .. ' установлен и запущен.', 5)
+					else
+						APUI.notify('Скрипт ' .. name .. ' установлен, но не запустился.\nПерезапустите игру.', 6)
+					end
+				else
+					APUI.notify('Не удалось установить ' .. name .. ':\n' .. tostring(ok and extra or 'ошибка скрипта') .. '.\nПопробуйте позже.', 6)
+				end
+			end
+			refreshInstalled()
+			apCat.busy, apCat.busyKind, apCat.progress = nil, nil, nil
+		end)
+	end
+
+	-- Текстура картинки создаётся в кадре ImGui один раз; ошибка - заглушка до перезагрузки скрипта.
+	local function texture(entry)
+		local path = apCat.images[entry.id]
+		if not path then return nil end
+		if apCat.textures[entry.id] == nil then
+			local ok, tex = pcall(imgui.CreateTextureFromFile, path)
+			apCat.textures[entry.id] = (ok and tex) or false
+		end
+		return apCat.textures[entry.id] or nil
+	end
+
+	local function drawImage(entry, size)
+		local C = APUI.colors
+		local tex = texture(entry)
+		if tex then
+			imgui.Image(tex, V2(size, size))
+			return
+		end
+		local pos = imgui.GetCursorScreenPos()
+		imgui.Dummy(V2(size, size))
+		local drawList = imgui.GetWindowDrawList()
+		drawList:AddRectFilled(pos, V2(pos.x + size, pos.y + size), imgui.GetColorU32(C.control), imgui.GetStyle().FrameRounding)
+		local icon = fa.ICON_FA_PUZZLE_PIECE
+		local iconSize = imgui.CalcTextSize(icon)
+		drawList:AddText(V2(pos.x + (size - iconSize.x) / 2, pos.y + (size - iconSize.y) / 2), imgui.GetColorU32(C.muted), icon)
+	end
+
+	-- Карточка в сетке SNHelper: картинка слева; справа колонка от верха картинки. Первая строка (высоты
+	-- кнопки) - название, версия и действие у правого края; под ней описание по всей ширине колонки.
+	local function drawCard(entry, width)
+		local C = APUI.colors
+		local gap = imgui.GetStyle().ItemSpacing.x
+		local pad = 10
+		local imgSize = math.floor(44 * imgui.GetIO().FontGlobalScale)
+		local own = isSelf(entry)
+		local action
+		if own then
+			action = APLogic.catSelfAction(entry, thisScript().version_num)
+		else
+			action = APLogic.catAction(entry, apCat.installed[entry.id])
+		end
+		local mine = apCat.busy == entry.id
+		local label
+		if mine then
+			local p = apCat.progress
+			label = apCat.busyKind == 'remove' and u8'Удаление...' or (p and p.total > 0 and u8('Загрузка '..p.done..' из '..p.total)) or u8'Загрузка...'
+		elseif action == 'self' then
+			label = u8'этот скрипт'
+		elseif action == 'install' then
+			label = fa.ICON_FA_DOWNLOAD..u8' Установить'
+		elseif action == 'update' then
+			label = fa.ICON_FA_SYNC..u8' Обновить'
+		else
+			label = fa.ICON_FA_TRASH..u8' Удалить'
+		end
+		local buttonWidth
+		if action == 'self' and not mine then
+			buttonWidth = imgui.CalcTextSize(label).x
+		elseif action == 'remove' and not mine then
+			buttonWidth = APUI.dangerButtonWidth(label)
+		else
+			buttonWidth = APUI.buttonWidth(label)
+		end
+		local textWidth = math.max(40, width - pad * 2 - imgSize - gap)
+		local version = u8'версия '..entry.version
+		local versionWidth = imgui.CalcTextSize(version).x
+		local nameWidth = textWidth - buttonWidth - gap * 2 - versionWidth
+		local showVersion = nameWidth >= 40 -- узко: версия уступает место названию
+		if not showVersion then nameWidth = textWidth - buttonWidth - gap end
+		local descHeight = 0
+		if entry.description ~= '' then
+			descHeight = imgui.GetFont():CalcTextSizeA(imgui.GetFontSize(), 10000, textWidth, entry.description).y
+		end
+		local height = math.floor(math.max(imgSize, APUI.frameHeight() + descHeight) + pad * 2)
+		imgui.PushStyleColor(imgui.Col.ChildWindowBg, C.card)
+		imgui.PushStyleVar(imgui.StyleVar.WindowPadding, V2(pad, pad))
+		imgui.BeginChild('apCatCard'..entry.id, V2(width, height), false, imgui.WindowFlags.AlwaysUseWindowPadding + imgui.WindowFlags.NoScrollbar)
+			drawImage(entry, imgSize)
+			imgui.SameLine()
+			imgui.BeginGroup()
+				-- Без вертикального промежутка после первой строки: описание сразу под ней.
+				imgui.PushStyleVar(imgui.StyleVar.ItemSpacing, V2(gap, 0))
+					local nameText = apFitText(entry.name, math.max(20, nameWidth))
+					local usedWidth = imgui.CalcTextSize(nameText).x
+					APUI.label(nameText, C.white)
+					if showVersion then
+						imgui.SameLine()
+						APUI.label(version, C.muted)
+						usedWidth = usedWidth + gap + versionWidth
+					end
+					-- Внутри группы SameLine(x) считает x от начала группы: действие ставится промежутком.
+					imgui.SameLine(0, math.max(gap, textWidth - usedWidth - buttonWidth))
+					if mine then
+						APUI.button(label..'##apCatBusy'..entry.id, nil, V2(buttonWidth, 0))
+					elseif action == 'self' then
+						APUI.label(label, C.accentSoft)
+					elseif action == 'remove' then
+						if APUI.dangerButton('apCat'..entry.id, label, V2(buttonWidth, 0)) then runJob(entry, 'remove') end
+					elseif APUI.button(label..'##apCat'..entry.id, 'primary', V2(buttonWidth, 0)) then
+						runJob(entry, own and 'self' or 'install')
+					end
+				imgui.PopStyleVar()
+				if entry.description ~= '' then
+					imgui.PushTextWrapPos(0)
+					imgui.TextColored(C.muted, entry.description)
+					imgui.PopTextWrapPos()
+				end
+			imgui.EndGroup()
+		imgui.EndChild()
+		imgui.PopStyleVar()
+		imgui.PopStyleColor()
+	end
+
+	-- Раздел в окне плеера: панель width x height (той же высоты, что вкладки «Радио» и «Мои треки»).
+	function apDrawCatalog(width, height)
+		local C = APUI.colors
+		if apCat.status == 'idle' then apCatFetch('open') end
+		-- Файлы могли удалить руками или из SNHelper: установленные пересчитываются не чаще раза в 2 с.
+		if apCat.status == 'ready' and not apCat.busy and os.clock() - (apCat.checkedAt or 0) > 2 then refreshInstalled() end
+		imgui.PushStyleColor(imgui.Col.ChildWindowBg, C.field)
+		imgui.PushStyleVar(imgui.StyleVar.WindowPadding, V2(8, 8))
+		imgui.BeginChild('apcatalog', V2(width, height), false, imgui.WindowFlags.AlwaysUseWindowPadding)
+			local inner = imgui.GetWindowContentRegionWidth()
+			local status = apCat.status
+			local refreshLabel = fa.ICON_FA_SYNC..u8' Обновить список'
+			if status == 'loading' then
+				APUI.label(u8'Загрузка списка...', C.muted)
+			elseif status == 'ready' then
+				APUI.label(u8('Скриптов: '..#apCat.list), C.muted)
+			else
+				APUI.label(u8'Скрипты от GORYCH', C.muted)
+			end
+			APUI.alignRight(APUI.buttonWidth(refreshLabel))
+			if APUI.button(refreshLabel..'##apCatRefresh') then
+				if apCat.busy then
+					APUI.notify('Подождите: идёт загрузка.', 3)
+				else
+					apCatFetch('refresh')
+				end
+			end
+			if not helpU8 then
+				helpU8 = {}
+				for i, line in ipairs(AP_CATALOG_HELP) do helpU8[i] = u8(line) end
+			end
+			local open = data.window.catalogHelp == true or data.window.catalogHelp == 'true'
+			local now = APUI.helpBlock('apcatalog', u8'Как пользоваться', helpU8, open)
+			if now ~= open then
+				data.window.catalogHelp = now
+				inicfg.save(data, cfgpath)
+			end
+			if status == 'error' then
+				imgui.PushTextWrapPos(0)
+				imgui.TextColored(C.danger, u8('Не удалось загрузить список: '..tostring(apCat.err)..'.'))
+				imgui.PopTextWrapPos()
+				if APUI.button(fa.ICON_FA_REDO..u8' Повторить##apCatRetry', 'primary') then apCatFetch('refresh') end
+			elseif status == 'empty' then
+				imgui.TextDisabled(u8'В каталоге пока нет скриптов.')
+			elseif status == 'ready' then
+				for _, entry in ipairs(apCat.list) do drawCard(entry, inner) end
+			end
+			if (status == 'ready' or status == 'empty') and apCat.skipped > 0 then
+				imgui.PushTextWrapPos(0)
+				imgui.TextDisabled(u8('Пропущено записей с ошибкой: '..apCat.skipped..'. Обновите плеер.'))
+				imgui.PopTextWrapPos()
+			end
+		imgui.EndChild()
+		imgui.PopStyleVar()
+		imgui.PopStyleColor()
 	end
 end
 -- Окно плеера. Файл идёт в склейке после main.lua: состояние (musics, current_radio, audioStream...) и
@@ -1800,16 +2480,27 @@ local function apDrawFull(x0, width)
 	apDrawTimeline(width)
 	apDrawControls(width)
 	imgui.Dummy(V2(0, 2))
-	currentPage = APUI.tabs('apsrc', { fa.ICON_FA_BROADCAST_TOWER .. u8' Радио', fa.ICON_FA_FOLDER_OPEN .. u8' Мои треки' }, currentPage)
+	-- Третья вкладка «Скрипты» - каталог (src/catalog.lua). Она не меняет currentPage: кнопки плеера
+	-- по-прежнему работают с последней выбранной вкладкой «Радио» или «Мои треки».
+	local tab = apView.catalog and 3 or currentPage
+	tab = APUI.tabs('apsrc', { fa.ICON_FA_BROADCAST_TOWER .. u8' Радио', fa.ICON_FA_FOLDER_OPEN .. u8' Мои треки',
+		fa.ICON_FA_PUZZLE_PIECE .. u8' Скрипты' }, tab)
+	apView.catalog = tab == 3
+	if tab ~= 3 then currentPage = tab end
 	local rowStep = APUI.frameHeight() + imgui.GetStyle().ItemSpacing.y
 	local listH = LIST_ROWS * (APUI.frameHeight() + 2) + 12
-	if currentPage == 2 then
-		apDrawFolderRow(width)
+	if apView.catalog then
+		-- Та же высота, что у вкладок со списком (строка поиска + строка папки или запас + список).
+		apDrawCatalog(width, listH + rowStep * 2)
 	else
-		listH = listH + rowStep -- без строки папки список выше: окно не меняет высоту при смене вкладки
+		if currentPage == 2 then
+			apDrawFolderRow(width)
+		else
+			listH = listH + rowStep -- без строки папки список выше: окно не меняет высоту при смене вкладки
+		end
+		apSearchField(apView.search[currentPage], width)
+		apDrawList(width, listH)
 	end
-	apSearchField(apView.search[currentPage], width)
-	apDrawList(width, listH)
 	-- Неброская подпись внизу окна: версия и автор.
 	local about = u8('Аудиоплеер ' .. tostring(thisScript().version) .. ', автор GORYCH')
 	imgui.SetCursorPosX(x0 + math.max(0, (width - imgui.CalcTextSize(about).x) / 2))

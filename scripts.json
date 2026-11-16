@@ -4,13 +4,13 @@
     {
       "id": "audio-player",
       "name": "Аудиоплеер",
-      "description": "Радио и музыка из папки на компьютере: «Сейчас играет», поиск, избранные станции, мини-режим. Станция подключается в фоне, игра не замирает. Окно: /aplayer или F12.",
-      "version": "1.1",
-      "version_num": 2,
+      "description": "Радио и музыка из папки на компьютере: «Сейчас играет», поиск, избранные станции, мини-плеер поверх игры, каталог скриптов. Станция подключается в фоне, игра не замирает. Окно: /aplayer или F12.",
+      "version": "1.2",
+      "version_num": 3,
       "image": "images/audio-player.png",
       "main": "samp-audio-player.lua",
       "files": [
-        { "path": "samp-audio-player.lua", "size": 76603, "src": "scripts/audio-player/samp-audio-player.lua" }
+        { "path": "samp-audio-player.lua", "size": 104925, "src": "scripts/audio-player/samp-audio-player.lua" }
       ],
       "deps": [
         { "path": "lib/imgui.lua", "size": 114068, "src": "deps/lib/imgui.lua" },
