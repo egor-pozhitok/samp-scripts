@@ -1,0 +1,37 @@
+{
+  "format": 1,
+  "scripts": [
+    {
+      "id": "audio-player",
+      "name": "Аудиоплеер",
+      "description": "Радиостанции и музыка из папки на компьютере. Станция подключается в фоне, игра не замирает. Окно: /aplayer или F12.",
+      "version": "1.0",
+      "version_num": 1,
+      "image": "images/audio-player.png",
+      "main": "samp-audio-player.lua",
+      "files": [
+        { "path": "samp-audio-player.lua", "size": 46157, "src": "scripts/audio-player/samp-audio-player.lua" }
+      ],
+      "deps": [
+        { "path": "lib/imgui.lua", "size": 114068, "src": "deps/lib/imgui.lua" },
+        { "path": "lib/MoonImGui.dll", "size": 3346432, "src": "deps/lib/MoonImGui.dll" },
+        { "path": "lib/bitex.lua", "size": 557, "src": "deps/lib/bitex.lua" },
+        { "path": "lib/windows/init.lua", "size": 184, "src": "deps/lib/windows/init.lua" },
+        { "path": "lib/windows/message.lua", "size": 26909, "src": "deps/lib/windows/message.lua" },
+        { "path": "lib/fAwesome5.lua", "size": 41642, "src": "deps/lib/fAwesome5.lua" },
+        { "path": "lib/encoding.lua", "size": 2636, "src": "deps/lib/encoding.lua" },
+        { "path": "lib/iconv.dll", "size": 1000960, "src": "deps/lib/iconv.dll" },
+        { "path": "lib/lfs.dll", "size": 126976, "src": "deps/lib/lfs.dll" },
+        { "path": "lib/samp/events.lua", "size": 26829, "src": "deps/lib/samp/events.lua" },
+        { "path": "lib/samp/raknet.lua", "size": 12181, "src": "deps/lib/samp/raknet.lua" },
+        { "path": "lib/samp/synchronization.lua", "size": 4296, "src": "deps/lib/samp/synchronization.lua" },
+        { "path": "lib/samp/events/bitstream_io.lua", "size": 7155, "src": "deps/lib/samp/events/bitstream_io.lua" },
+        { "path": "lib/samp/events/core.lua", "size": 3880, "src": "deps/lib/samp/events/core.lua" },
+        { "path": "lib/samp/events/extra_types.lua", "size": 1573, "src": "deps/lib/samp/events/extra_types.lua" },
+        { "path": "lib/samp/events/handlers.lua", "size": 17405, "src": "deps/lib/samp/events/handlers.lua" },
+        { "path": "lib/samp/events/utils.lua", "size": 1385, "src": "deps/lib/samp/events/utils.lua" },
+        { "path": "resource/fonts/fa-solid-900.ttf", "size": 202744, "src": "deps/resource/fonts/fa-solid-900.ttf" }
+      ]
+    }
+  ]
+}
