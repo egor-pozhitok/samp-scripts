@@ -146,7 +146,7 @@ function APBoot.reportFailure(list)
 	if #list > 5 then
 		sampAddChatMessage(('Audio Player | {FFFFFF}... и ещё %d'):format(#list - 5), 0xFF5555)
 	end
-	sampAddChatMessage('Audio Player | {FFFFFF}Возьмите их вручную: github.com/egor-pozhitok/samp-scripts (папка deps)', 0xFF5555)
+	sampAddChatMessage('Audio Player | {FFFFFF}Проверьте интернет и перезапустите скрипт (Ctrl+R).', 0xFF5555)
 end
 
 function APBoot.run(problems)
@@ -1810,6 +1810,10 @@ local function apDrawFull(x0, width)
 	end
 	apSearchField(apView.search[currentPage], width)
 	apDrawList(width, listH)
+	-- Неброская подпись внизу окна: версия и автор.
+	local about = u8('Аудиоплеер ' .. tostring(thisScript().version) .. ', автор GORYCH')
+	imgui.SetCursorPosX(x0 + math.max(0, (width - imgui.CalcTextSize(about).x) / 2))
+	imgui.TextColored(C.faint, about)
 end
 
 -- Квадратная кнопка-значок высоты кнопки темы по центру ячейки width x boxH (для ряда мини-режима).
