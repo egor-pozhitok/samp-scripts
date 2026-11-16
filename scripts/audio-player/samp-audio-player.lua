@@ -30,6 +30,11 @@ APBoot.DEPS = {
 APBoot.CATALOG_DEP = { path = 'lib/samp-catalog.lua', size = 22568, module = 'samp-catalog', optional = true, minVersion = 1 }
 table.insert(APBoot.DEPS, APBoot.CATALOG_DEP)
 
+APBoot.TOAST_DEP = { path = 'lib/samp-toast.lua', size = 1380, module = 'samp-toast', optional = true, minVersion = 1 }
+APBoot.NOTIFIER_DEP = { path = 'samp-notifier.lua', size = 5861, optional = true, start = true, marker = "script_name('samp-notifier')" }
+table.insert(APBoot.DEPS, APBoot.TOAST_DEP)
+table.insert(APBoot.DEPS, APBoot.NOTIFIER_DEP)
+
 function APBoot.depUrl(dep)
 	return APBoot.DEPS_REPO .. 'deps/' .. dep.path
 end
@@ -107,11 +112,23 @@ function APBoot.acceptDownload(tmp, final, size)
 	return os.rename(tmp, final) == true
 end
 
+function APBoot.hasMarker(path, marker)
+	local f = io.open(path, 'rb')
+	if not f then return false end
+	local text = f:read('*a')
+	f:close()
+	return text:find(marker, 1, true) ~= nil and loadstring(text) ~= nil
+end
+
 function APBoot.acceptDep(tmp, final, dep)
 	local size = dep.size
-	if dep.minVersion and APBoot.fileSize(tmp) ~= size then
-		local v = APBoot.fileVersion(tmp)
-		if v and v >= dep.minVersion then size = APBoot.fileSize(tmp) end
+	if APBoot.fileSize(tmp) ~= size then
+		if dep.minVersion then
+			local v = APBoot.fileVersion(tmp)
+			if v and v >= dep.minVersion then size = APBoot.fileSize(tmp) end
+		elseif dep.marker and APBoot.hasMarker(tmp, dep.marker) then
+			size = APBoot.fileSize(tmp)
+		end
 	end
 	return APBoot.acceptDownload(tmp, final, size)
 end
@@ -133,8 +150,8 @@ if APBOOT_TEST then return APBoot end
 script_name('samp-audio-player')
 script_author('GORYCH')
 script_description('Music player: radio stations and tracks from a folder')
-script_version_number(4)
-script_version('1.3')
+script_version_number(5)
+script_version('1.4')
 
 function APBoot.statePath()
 	return getWorkingDirectory() .. '\\config\\samp-audio-player\\bootstrap.state'
@@ -207,6 +224,8 @@ function APBoot.run(problems)
 		if not (ok and APBoot.acceptDep(tmp, final, dep)) then
 			os.remove(tmp)
 			table.insert(failed, dep)
+		elseif dep.start then
+			pcall(script.load, final)
 		end
 	end
 	if APBoot.hasRequired(failed) then
@@ -604,8 +623,20 @@ do
 		return open
 	end
 
+	local toastLib, toastTried = nil, nil
+	local function toastClient()
+		if toastLib then return toastLib end
+		if toastTried and os.clock() - toastTried < 5 then return nil end
+		toastTried = os.clock()
+		local ok, lib = pcall(require, 'samp-toast')
+		if ok and APBoot.versionOk(lib, APBoot.TOAST_DEP) then toastLib = lib end
+		return toastLib
+	end
+
 	APUI.toasts = {}
-	function APUI.notify(text, seconds)
+	function APUI.notify(text, seconds, kind, key)
+		local T = toastClient()
+		if T and T.notify(tostring(text), { seconds = tonumber(seconds) or 4, kind = kind, key = key, sender = 'Аудиоплеер' }) then return end
 		local queue = APUI.toasts
 		if #queue >= 8 then table.remove(queue, 1) end
 		queue[#queue + 1] = { text = tostring(text), seconds = tonumber(seconds) or 4 }
@@ -1371,7 +1402,7 @@ do
 		frameHeight = APUI.frameHeight,
 		alignRight = APUI.alignRight,
 		fitText = function(text, width) return apFitText(text, width) end,
-		notify = function(text, seconds) APUI.notify(text, seconds) end,
+		notify = function(text, seconds, kind) APUI.notify(text, seconds, kind) end,
 		help = function(lines)
 			local open = data.window.catalogHelp == true or data.window.catalogHelp == 'true'
 			local now = APUI.helpBlock('apcatalog', u8'Как пользоваться', lines, open)
