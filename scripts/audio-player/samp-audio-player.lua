@@ -1760,40 +1760,74 @@ local function apDrawFull(x0, width)
 	apDrawList(width, listH)
 end
 
+-- Квадратная кнопка-значок высоты кнопки темы по центру ячейки width x boxH (для ряда мини-режима).
+local function apBoxButton(id, icon, boxH)
+	local C = APUI.colors
+	local h = APUI.frameHeight()
+	local w = APUI.buttonWidth(icon)
+	local pos = imgui.GetCursorScreenPos()
+	local pressed = imgui.InvisibleButton('##box' .. id, V2(w, boxH))
+	local hover = APUI.animate('box:' .. id, imgui.IsItemHovered() and 1 or 0, 16)
+	local top = pos.y + (boxH - h) / 2
+	local drawList = imgui.GetWindowDrawList()
+	drawList:AddRectFilled(V2(pos.x, top), V2(pos.x + w, top + h), u32(APUI.mix(C.control, C.controlHover, hover)), imgui.GetStyle().FrameRounding)
+	local size = imgui.CalcTextSize(icon)
+	drawList:AddText(V2(pos.x + (w - size.x) / 2, top + (h - size.y) / 2), u32(C.text), icon)
+	return pressed
+end
+
+-- Мини-режим: один ряд высоты rowH. Обложка, текст (две строки блоком), круглые и квадратные кнопки -
+-- каждый элемент занимает ячейку высоты rowH и рисуется по её вертикальной середине, поэтому поля окна
+-- сверху и снизу одинаковые.
 local function apDrawMini(x0, width)
 	local C = APUI.colors
 	local title, kind, status, isRadio = apNowPlaying()
 	local gap = imgui.GetStyle().ItemSpacing.x
 	local small = APUI.frameHeight() + 4
+	local lineH = imgui.GetTextLineHeight()
+	local textH = lineH * 2 + 4
+	local rowH = math.max(small, textH)
 	local art = small
-	local pos = imgui.GetCursorScreenPos()
-	imgui.Dummy(V2(art, art))
+	local expandIcon, closeIcon = fa.ICON_FA_EXPAND, fa.ICON_FA_TIMES
+	local buttonsW = small * 3 + APUI.buttonWidth(expandIcon) + APUI.buttonWidth(closeIcon) + gap * 4
+	local textW = width - art - gap - buttonsW - gap
 	local drawList = imgui.GetWindowDrawList()
-	drawList:AddRectFilled(pos, V2(pos.x + art, pos.y + art), u32(withAlpha(C.accent, 0.85)), 8)
+	-- Обложка.
+	local pos = imgui.GetCursorScreenPos()
+	imgui.Dummy(V2(art, rowH))
+	local top = pos.y + (rowH - art) / 2
+	drawList:AddRectFilled(V2(pos.x, top), V2(pos.x + art, top + art), u32(withAlpha(C.accent, 0.85)), 8)
 	local icon = isRadio and fa.ICON_FA_BROADCAST_TOWER or fa.ICON_FA_MUSIC
 	local iconSize = imgui.CalcTextSize(icon)
-	drawList:AddText(V2(pos.x + (art - iconSize.x) / 2, pos.y + (art - iconSize.y) / 2), u32(C.white), icon)
-	-- Кнопки справа: предыдущий, играть/пауза, следующий, полное окно, закрыть.
-	local modeW = APUI.buttonWidth(fa.ICON_FA_EXPAND) + APUI.buttonWidth(fa.ICON_FA_TIMES) + gap
-	local buttonsW = small * 3 + gap * 3 + modeW
-	local textW = width - art - gap - buttonsW - gap
+	drawList:AddText(V2(pos.x + (art - iconSize.x) / 2, top + (art - iconSize.y) / 2), u32(C.white), icon)
+	-- Название и состояние блоком по середине ряда.
 	imgui.SameLine()
-	imgui.BeginGroup()
-		local statusColor = kind == 'playing' and C.accentSoft or (kind == 'error' and C.danger or C.muted)
-		imgui.TextColored(C.white, apFitText(title, textW))
-		imgui.TextColored(statusColor, apFitText(status, textW))
-	imgui.EndGroup()
+	pos = imgui.GetCursorScreenPos()
+	imgui.Dummy(V2(math.max(1, textW), rowH))
+	local textTop = pos.y + (rowH - textH) / 2
+	local statusColor = kind == 'playing' and C.accentSoft or (kind == 'error' and C.danger or C.muted)
+	drawList:AddText(V2(pos.x, textTop), u32(C.white), apFitText(title, textW))
+	drawList:AddText(V2(pos.x, textTop + lineH + 4), u32(statusColor), apFitText(status, textW))
+	-- Кнопки у правого края.
 	imgui.SameLine(x0 + width - buttonsW)
 	local tracks = apSourceIsTracks()
-	if apRoundButton('mprev', fa.ICON_FA_STEP_BACKWARD, small, nil) then apStep(-1) end
+	if apRoundButton('mprev', fa.ICON_FA_STEP_BACKWARD, small, nil, rowH) then apStep(-1) end
 	imgui.Hint(u8(tracks and 'Предыдущий трек' or 'Предыдущая станция'))
 	imgui.SameLine()
-	if apRoundButton('mplay', icon_play_pause, small, 'primary') then apTogglePlay() end
+	if apRoundButton('mplay', icon_play_pause, small, 'primary', rowH) then apTogglePlay() end
 	imgui.Hint(u8'Играть / Пауза')
 	imgui.SameLine()
-	if apRoundButton('mnext', fa.ICON_FA_STEP_FORWARD, small, nil) then apStep(1) end
+	if apRoundButton('mnext', fa.ICON_FA_STEP_FORWARD, small, nil, rowH) then apStep(1) end
 	imgui.Hint(u8(tracks and 'Следующий трек' or 'Следующая станция'))
-	apHeaderButtons(x0, width, true)
+	imgui.SameLine()
+	if apBoxButton('mexpand', expandIcon, rowH) then
+		data.window.mini = false
+		inicfg.save(data, cfgpath)
+	end
+	imgui.Hint(u8'Полное окно')
+	imgui.SameLine()
+	if apBoxButton('mclose', closeIcon, rowH) then apWindow.v = false end
+	imgui.Hint(u8'Закрыть (Esc)')
 end
 
 function imgui.OnDrawFrame()
@@ -1804,8 +1838,9 @@ function imgui.OnDrawFrame()
 	end
 	local mini = data.window.mini == true or data.window.mini == 'true'
 	local width = mini and MINI_W or FULL_W
-	local padX, padY = 18, 16
-	if mini then padX, padY = 12, 10 end
+	-- Поля окна одинаковые со всех сторон.
+	local padX, padY = 16, 16
+	if mini then padX, padY = 12, 12 end
 	local x, y = tonumber(data.window.posX) or -1, tonumber(data.window.posY) or -1
 	if x < 0 or y < 0 or x > resX - 60 or y > resY - 60 then x, y = math.floor((resX - width) / 2), math.floor(resY / 5) end
 	imgui.SetNextWindowPos(imgui.ImVec2(x, y), imgui.Cond.FirstUseEver)
