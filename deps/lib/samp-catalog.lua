@@ -1,42 +1,14 @@
--- samp-catalog: общий каталог скриптов GORYCH (репозиторий samp-scripts) для всех скриптов автора.
--- Лежит в moonloader/lib/samp-catalog.lua, подключается так: local SC = require 'samp-catalog'.
--- Каждый скрипт получает файл через свой загрузчик (в его списке DEPS с размером) и запускается и без
--- него: тогда вместо каталога он показывает, что файла нет.
---
--- Две части:
---   1. Чистая логика (без API MoonLoader, с тестами): безопасные пути, разбор scripts.json, что скачать,
---      что удалить, файл состояния, действие на карточке, в том числе на карточке самого скрипта.
---   2. SC.new(opts) - каталог внутри скрипта: загрузка списка и картинок, установка, обновление (и самого
---      скрипта), удаление, отрисовка раздела. Внешний вид - через функции темы скрипта (opts.ui).
---
--- Общие файлы в папке игры (их ведут все скрипты с каталогом, формат менять нельзя):
---   config/SNHelper/catalog.state - установленные версии, строки «id=version_num». Перед каждой записью
---     файл перечитывается и меняется только своя строка: скрипты могут писать в него одновременно.
---   resource/SNHelper/catalog/<id>.png - картинки карточек: скачанную одним скриптом другой не качает.
---
--- Файл собирается в CP1251, как скрипты: тексты для уведомлений и чата здесь в CP1251, для ImGui они
--- проходят через opts.u8 (encoding.UTF8 скрипта). Тексты каталога (scripts.json) - в UTF-8.
---
--- Совместимость: VERSION растёт с каждым выпуском; новые версии только добавляют. Скрипт требует
--- VERSION не ниже нужной ему; более новая библиотека, скачанная другим скриптом, ему подходит.
-
+-- samp-catalog: каталог скриптов GORYCH для MoonLoader
 local M = {}
 
 M.VERSION = 1
 M.REPO = 'https://raw.githubusercontent.com/egor-pozhitok/samp-scripts/main/'
 M.STATE_FILE = 'config/SNHelper/catalog.state'
 M.IMAGE_DIR = 'resource/SNHelper/catalog'
--- Файлы, которые ни один скрипт каталога не может заменить или удалить: SNHelper обновляется сам.
 M.ALWAYS_PROTECTED = { 'SNHelper.lua', 'SNHelper.luac' }
 M.MAX_SIZE = 50 * 1024 * 1024
 M.MAX_FILES = 64
 
-------------------------------------------------------------------------------------------------------
--- 1. Чистая логика. Пути в каталоге - относительно папки moonloader игры (path) и относительно корня
--- репозитория samp-scripts (src, image).
-
--- Путь безопасен: латиница, цифры, '-', '_', '.', '/' между частями; без '..', '.', пустых частей,
--- ведущего '/', обратной косой, двоеточия (диск, потоки NTFS), точки в конце части и имён устройств Windows.
 local DEVICES = { con = true, prn = true, aux = true, nul = true }
 function M.safePath(path)
 	if type(path) ~= 'string' or #path == 0 or #path > 200 then return false end
@@ -49,13 +21,10 @@ function M.safePath(path)
 	return true
 end
 
--- Путь для сравнения: строчные буквы, прямые косые.
 function M.normPath(path)
 	return (tostring(path):gsub('\\', '/'):lower())
 end
 
--- Множества для parse/plan/removeList. protect - пути, которые нельзя трогать никогда (кроме SNHelper,
--- он там всегда), deps - общие файлы скрипта (его DEPS: строки или таблицы с полем path).
 function M.protectSets(protect, deps)
 	local selfSet, shared = {}, {}
 	for _, p in ipairs(M.ALWAYS_PROTECTED) do selfSet[M.normPath(p)] = true end
@@ -83,8 +52,6 @@ local function fileList(list, check)
 	return out
 end
 
--- Одна запись каталога или nil, если в ней ошибка.
--- ownKey - файл самого скрипта с каталогом: его могут менять только файлы его же записи.
 local function parseEntry(e, selfSet, shared, ownKey)
 	if type(e) ~= 'table' then return nil end
 	if type(e.id) ~= 'string' or #e.id > 40 or not e.id:match('^[a-z0-9][a-z0-9_%-]*$') then return nil end
@@ -98,8 +65,6 @@ local function parseEntry(e, selfSet, shared, ownKey)
 	local mainKey = M.normPath(e.main)
 	if selfSet[mainKey] or shared[mainKey] then return nil end
 	local foreign = ownKey and mainKey ~= ownKey and ownKey or nil
-	-- Свои файлы скрипта не могут заменить ни защищённые файлы, ни общие файлы скрипта с каталогом,
-	-- ни сам скрипт с каталогом (кроме его собственной записи).
 	local files = fileList(e.files, function(key) return not selfSet[key] and not shared[key] and key ~= foreign end)
 	if not files then return nil end
 	local own, hasMain = {}, false
@@ -109,8 +74,6 @@ local function parseEntry(e, selfSet, shared, ownKey)
 		if key == mainKey then hasMain = true end
 	end
 	if not hasMain then return nil end
-	-- Общие файлы (deps) могут совпадать с общими файлами скрипта (тогда их только докачивают),
-	-- но не с защищёнными и не со своими файлами.
 	local deps = fileList(e.deps, function(key) return not selfSet[key] and not own[key] and key ~= foreign end)
 	if not deps then return nil end
 	return {
@@ -119,9 +82,6 @@ local function parseEntry(e, selfSet, shared, ownKey)
 	}
 end
 
--- Разобрать каталог (таблица из decodeJson). ownKey (необязательно) - нормализованное имя файла скрипта,
--- который читает каталог. Возвращает список скриптов и число пропущенных записей
--- с ошибкой либо nil и причину (CP1251), если сам каталог не того формата.
 function M.parse(info, selfSet, shared, ownKey)
 	if type(info) ~= 'table' then return nil, 'не каталог' end
 	if tonumber(info.format) ~= 1 then return nil, 'формат каталога не поддерживается' end
@@ -139,21 +99,17 @@ function M.parse(info, selfSet, shared, ownKey)
 	return list, skipped
 end
 
--- Действие для карточки: installed - номер установленной версии или nil, если скрипта нет.
 function M.action(entry, installed)
 	if installed == nil then return 'install' end
 	if entry.version_num > installed then return 'update' end
 	return 'remove'
 end
 
--- Действие для карточки самого скрипта: «Обновить», если в каталоге версия новее запущенной, иначе
--- только пометка «этот скрипт» (удалять себя из своего же окна нельзя).
 function M.selfAction(entry, runningNum)
 	if entry.version_num > (tonumber(runningNum) or 0) then return 'update' end
 	return 'self'
 end
 
--- Файл состояния установленных скриптов: строки «id=version_num».
 function M.stateParse(text)
 	local state = {}
 	for line in (tostring(text or '') .. '\n'):gmatch('(.-)\n') do
@@ -172,17 +128,12 @@ function M.stateText(state)
 	return table.concat(out)
 end
 
--- Новый текст файла состояния: запись id меняется (num = nil - удаляется), чужие строки остаются.
--- text - то, что лежит в файле прямо сейчас (его перечитывают перед каждой записью).
 function M.stateUpdate(text, id, num)
 	local state = M.stateParse(text)
 	state[id] = num
 	return M.stateText(state)
 end
 
--- Что скачать при установке или обновлении: все свои файлы; общие - если их нет (или пустые) или другой
--- размер, но общий файл скрипта с каталогом (shared) с другим размером не трогаем: это рабочая версия
--- для других скриптов. sizeOf(path) - размер файла на диске или nil.
 function M.plan(entry, sizeOf, shared)
 	local plan = {}
 	for _, f in ipairs(entry.files) do plan[#plan + 1] = f end
@@ -195,8 +146,6 @@ function M.plan(entry, sizeOf, shared)
 	return plan
 end
 
--- Что удалить: главный файл и свои файлы скрипта; общие файлы (deps), защищённые и общие файлы
--- скрипта с каталогом - никогда.
 function M.removeList(entry, selfSet, shared)
 	local deps, seen, out = {}, {}, {}
 	for _, d in ipairs(entry.deps) do deps[M.normPath(d.path)] = true end
@@ -211,8 +160,6 @@ function M.removeList(entry, selfSet, shared)
 	return out
 end
 
--- Состояние списка: idle (не открывали), loading, ready, empty, error.
--- События: open (первое открытие раздела), refresh (кнопка), loaded (count скриптов), failed.
 function M.nextStatus(status, event, count)
 	if event == 'open' then return status == 'idle' and 'loading' or status end
 	if event == 'refresh' then return 'loading' end
@@ -222,13 +169,10 @@ function M.nextStatus(status, event, count)
 	return status
 end
 
--- Скачанная картинка - PNG (а не страница ошибки).
 function M.isPng(head)
 	return type(head) == 'string' and head:sub(1, 8) == '\137PNG\r\n\26\n'
 end
 
--- Справка раздела (CP1251). selfName - как назвать сам скрипт («плеер»); nil - карточки себя нет.
--- extra - строки скрипта после общих. Номера ставятся здесь.
 function M.helpLines(selfName, extra)
 	local lines = {
 		'Здесь скрипты от GORYCH. Список загружается из интернета при первом открытии раздела, «Обновить список» загружает его заново.',
@@ -241,29 +185,6 @@ function M.helpLines(selfName, extra)
 	for i, line in ipairs(lines) do lines[i] = i .. '. ' .. line end
 	return lines
 end
-
-------------------------------------------------------------------------------------------------------
--- 2. Каталог внутри скрипта. Всё ниже вызывает API MoonLoader только во время работы, поэтому файл
--- подключается и в тестах без игры.
---
--- opts:
---   u8          encoding.UTF8 скрипта (обязательно): u8(s) и u8:decode(s)
---   ui          тема скрипта (обязательно):
---                 colors = { card, control, muted, white, accent, danger, panel }
---                 label(text, color), button(label, kind, size) -> bool, dangerButton(id, label, size) -> bool
---                   (удаление с подтверждением: true на втором нажатии), buttonWidth(label),
---                 dangerButtonWidth(label), frameHeight(), alignRight(width), fitText(text, width),
---                 notify(text1251, seconds, kind) (kind: 'success' | 'error' | nil),
---                 help(linesU8) - необязательно: справка над списком
---   deps        общие файлы скрипта (его DEPS): каталог их не перезаписывает и не удаляет
---   protect     ещё пути, которые каталог не трогает никогда (SNHelper передаёт своё имя файла)
---   selfName    как назвать сам скрипт в текстах (винительный падеж: «плеер»); nil - своей карточки нет
---   chatPrefix  начало строки чата при обновлении себя («Audio Player»)
---   tag         начало строк лога ('[AudioPlayer]')
---   dataDir     папка для временного файла списка ('config/samp-audio-player')
---   idPrefix    префикс id элементов ImGui ('apCat'); imageSize, cardPad - размеры карточки
---   helpExtra   строки справки после общих (CP1251)
---   selfFile, runningVersion, repo, timeout, imgui, fa, download - для тестов и особых случаев
 
 local Catalog = {}
 Catalog.__index = Catalog
@@ -313,16 +234,15 @@ local function ensureDir(filePath)
 	end
 end
 
--- Скачать url в path, ждать не дольше timeout секунд без прогресса. Вызывать из lua_thread.
 local function download(url, path, timeout)
 	local done = false
 	local deadline = os.time() + timeout
 	os.remove(path)
 	downloadUrlToFile(url, path, function(_, status)
-		if status == 58 then -- STATUSEX_ENDDOWNLOAD
+		if status == 58 then
 			done = true
 		else
-			deadline = os.time() + timeout -- любой прогресс продлевает ожидание
+			deadline = os.time() + timeout
 		end
 	end)
 	while not done and os.time() <= deadline do wait(0) end
@@ -365,7 +285,6 @@ function Catalog:readState()
 	return M.stateParse(readFile(statePath()) or '')
 end
 
--- Записать версию id (nil - убрать запись), не трогая чужие строки: файл перечитывается прямо перед записью.
 function Catalog:setState(id, num)
 	ensureDir(statePath())
 	local text = M.stateUpdate(readFile(statePath()) or '', id, num)
@@ -376,7 +295,6 @@ function Catalog:setState(id, num)
 	return true
 end
 
--- Установлен ли скрипт, решает наличие его главного файла; номер версии - из файла состояния (нет - 0).
 function Catalog:refreshInstalled()
 	local state = self:readState()
 	local installed = {}
@@ -387,7 +305,6 @@ function Catalog:refreshInstalled()
 	self.checkedAt = os.clock()
 end
 
--- Картинка скачивается один раз в общий кэш; не PNG - не сохраняется (на карточке заглушка).
 function Catalog:fetchImages()
 	for _, entry in ipairs(self.list) do
 		if entry.image then
@@ -414,7 +331,6 @@ function Catalog:fetchList()
 	os.remove(tmp)
 	if not ok or not text then return nil, 'сервер не ответил' end
 	text = text:gsub('^\239\187\191', '')
-	-- Ответ вида «404: Not Found» не передаём в decodeJson: он пишет исключение в лог.
 	if not text:match('^%s*{') then return nil, 'каталог не найден' end
 	local okJson, info = pcall(decodeJson, text)
 	if not okJson or type(info) ~= 'table' then return nil, 'каталог повреждён' end
@@ -422,7 +338,6 @@ function Catalog:fetchList()
 	return M.parse(info, selfSet, shared, self:ownName())
 end
 
--- event: 'open' (первое открытие раздела) или 'refresh' (кнопка).
 function Catalog:fetch(event)
 	if self.busy then return end
 	local status = M.nextStatus(self.status, event)
@@ -454,7 +369,6 @@ local function findRunning(path)
 	return nil
 end
 
--- Скачать файлы записи: всё во временные файлы со сверкой размера, заменить только после этого.
 function Catalog:fetchFiles(entry)
 	local _, shared = self:sets()
 	local plan = M.plan(entry, function(p) return fileSize(full(p)) end, shared)
@@ -498,8 +412,6 @@ function Catalog:install(entry)
 	return true, started
 end
 
--- Обновление самого скрипта: файлы заменены - перезагрузка. Строка пишется в чат: окно старой версии
--- закроется вместе с ней.
 function Catalog:updateSelf(entry)
 	local ok, err = self:fetchFiles(entry)
 	if not ok then return false, err end
@@ -522,7 +434,6 @@ function Catalog:remove(entry)
 	return not doesFileExist(full(entry.main))
 end
 
--- kind: 'install' (и обновление), 'self' (обновление самого скрипта) или 'remove'.
 function Catalog:run(entry, kind)
 	local notify = self.opts.ui.notify
 	if self.busy then
@@ -543,7 +454,6 @@ function Catalog:run(entry, kind)
 		elseif kind == 'self' then
 			local ok, done, extra = pcall(self.updateSelf, self, entry)
 			if not ok then self:log(done) end
-			-- При успехе скрипт уже перезагружается; сообщение - только если обновить не вышло.
 			if not (ok and done) then
 				notify('Не удалось обновить ' .. self.opts.selfName .. ':\n' .. tostring(ok and extra or 'ошибка скрипта') .. '.\nПопробуйте позже.', 6, 'error')
 			end
@@ -565,16 +475,12 @@ function Catalog:run(entry, kind)
 	end)
 end
 
-------------------------------------------------------------------------------------------------------
--- Отрисовка. Каждый Push здесь закрыт своим Pop в той же функции.
-
 function Catalog:libs()
 	local imgui = self.opts.imgui or require('imgui')
 	local fa = self.opts.fa or require('fAwesome5')
 	return imgui, fa
 end
 
--- Текстура картинки создаётся в кадре ImGui один раз; ошибка - заглушка до перезагрузки скрипта.
 function Catalog:texture(entry)
 	local imgui = self:libs()
 	local path = self.images[entry.id]
@@ -604,8 +510,6 @@ function Catalog:drawImage(entry, size)
 	drawList:AddText(V2(pos.x + (size - iconSize.x) / 2, pos.y + (size - iconSize.y) / 2), imgui.GetColorU32(C.muted), icon)
 end
 
--- Карточка: картинка слева; справа колонка от верха картинки. Первая строка (высоты кнопки) - название,
--- версия и действие у правого края; под ней описание по всей ширине колонки.
 function Catalog:drawCard(entry, width)
 	local imgui, fa = self:libs()
 	local V2 = imgui.ImVec2
@@ -648,7 +552,7 @@ function Catalog:drawCard(entry, width)
 	local version = u8('версия ') .. entry.version
 	local versionWidth = imgui.CalcTextSize(version).x
 	local nameWidth = textWidth - buttonWidth - gap * 2 - versionWidth
-	local showVersion = nameWidth >= 40 -- узко: версия уступает место названию
+	local showVersion = nameWidth >= 40
 	if not showVersion then nameWidth = textWidth - buttonWidth - gap end
 	local descHeight = 0
 	if entry.description ~= '' then
@@ -661,7 +565,6 @@ function Catalog:drawCard(entry, width)
 		self:drawImage(entry, imgSize)
 		imgui.SameLine()
 		imgui.BeginGroup()
-			-- Без вертикального промежутка после первой строки: описание сразу под ней.
 			imgui.PushStyleVar(imgui.StyleVar.ItemSpacing, V2(gap, 0))
 				local nameText = ui.fitText(entry.name, math.max(20, nameWidth))
 				local usedWidth = imgui.CalcTextSize(nameText).x
@@ -671,7 +574,6 @@ function Catalog:drawCard(entry, width)
 					ui.label(version, C.muted)
 					usedWidth = usedWidth + gap + versionWidth
 				end
-				-- Внутри группы SameLine(x) считает x от начала группы: действие ставится промежутком.
 				imgui.SameLine(0, math.max(gap, textWidth - usedWidth - buttonWidth))
 				if mine then
 					ui.button(label .. '##' .. id .. 'Busy' .. entry.id, nil, V2(buttonWidth, 0))
@@ -740,13 +642,10 @@ function Catalog:drawBody(inner)
 	end
 end
 
--- Раздел целиком. С height - панель width x height цвета colors.panel со своей прокруткой; без height -
--- прямо в текущем окне скрипта (ширина - доступная).
 function Catalog:draw(width, height)
 	local imgui = self:libs()
 	local V2 = imgui.ImVec2
 	if self.status == 'idle' then self:fetch('open') end
-	-- Файлы могли удалить руками или из другого скрипта: установленные пересчитываются не чаще раза в 2 с.
 	if self.status == 'ready' and not self.busy and os.clock() - self.checkedAt > 2 then self:refreshInstalled() end
 	if not height then
 		self:drawBody(width or imgui.GetContentRegionAvailWidth())

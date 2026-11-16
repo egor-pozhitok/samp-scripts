@@ -1,16 +1,11 @@
--- Загрузчик недостающих файлов: если нет библиотек (imgui, шрифт значков и др.), скрипт до запуска
--- скачивает их из общего репозитория samp-scripts (папка deps) и перезапускается.
--- Это сокращённая копия загрузчика SNHelper (SNBoot): без самообновления и необязательных файлов.
+-- Аудиоплеер для MoonLoader (samp-audio-player), автор GORYCH
 local APBoot = {}
 
 APBoot.DEPS_REPO = 'https://raw.githubusercontent.com/egor-pozhitok/samp-scripts/main/'
--- Не больше MAX_ATTEMPTS загрузок за ATTEMPT_WINDOW секунд: при постоянной ошибке файлы не качаются
--- на каждом запуске игры.
 APBoot.MAX_ATTEMPTS = 2
 APBoot.ATTEMPT_WINDOW = 600
 APBoot.TIMEOUT_SEC = 30
 
--- Файлы зависимостей и их размеры; tools/check_deps.lua сверяет их с папкой deps репозитория samp-scripts.
 APBoot.DEPS = {
 	{ path = 'lib/imgui.lua', size = 114068, module = 'imgui' },
 	{ path = 'lib/MoonImGui.dll', size = 3346432, module = 'imgui' },
@@ -32,14 +27,9 @@ APBoot.DEPS = {
 	{ path = 'resource/fonts/fa-solid-900.ttf', size = 202744 },
 }
 
--- Общий каталог скриптов (вкладка «Скрипты», src/catalog.lua). Необязательный файл (optional): если он
--- не скачался, плеер всё равно запускается, а вкладка говорит, что каталога нет. minVersion: модуль
--- подходит, если его VERSION не ниже; скачанный файл другого размера принимается, если это та же
--- библиотека не ниже minVersion (её обновили в репозитории, а размер здесь ещё старый).
-APBoot.CATALOG_DEP = { path = 'lib/samp-catalog.lua', size = 30515, module = 'samp-catalog', optional = true, minVersion = 1 }
+APBoot.CATALOG_DEP = { path = 'lib/samp-catalog.lua', size = 22568, module = 'samp-catalog', optional = true, minVersion = 1 }
 table.insert(APBoot.DEPS, APBoot.CATALOG_DEP)
 
--- Адрес файла зависимости в samp-scripts/deps.
 function APBoot.depUrl(dep)
 	return APBoot.DEPS_REPO .. 'deps/' .. dep.path
 end
@@ -52,13 +42,11 @@ function APBoot.fileSize(path)
 	return size
 end
 
--- Модуль подходит по версии: у файла без minVersion - всегда, иначе нужна таблица с VERSION >= minVersion.
 function APBoot.versionOk(mod, dep)
 	if not dep or not dep.minVersion then return true end
 	return type(mod) == 'table' and type(mod.VERSION) == 'number' and mod.VERSION >= dep.minVersion
 end
 
--- VERSION библиотеки в файле path (nil - файл не загружается или это не такая библиотека).
 function APBoot.fileVersion(path)
 	local chunk = loadfile(path)
 	if not chunk then return nil end
@@ -67,9 +55,6 @@ function APBoot.fileVersion(path)
 	return nil
 end
 
--- Проблемный файл: отсутствует, пустой, либо все файлы модуля на месте, но модуль не подключается
--- (или его версия ниже minVersion). Существующие файлы другого размера не трогаем: это может быть
--- рабочая версия для других скриптов. tryRequire(module, dep) - подключить и проверить модуль.
 function APBoot.findProblems(deps, root, tryRequire)
 	local missing, groupHasMissing = {}, {}
 	for i, dep in ipairs(deps) do
@@ -122,8 +107,6 @@ function APBoot.acceptDownload(tmp, final, size)
 	return os.rename(tmp, final) == true
 end
 
--- Принять скачанный файл зависимости: размер как в списке, а у библиотеки с minVersion - и другой
--- размер, если в файле она же и не ниже minVersion.
 function APBoot.acceptDep(tmp, final, dep)
 	local size = dep.size
 	if dep.minVersion and APBoot.fileSize(tmp) ~= size then
@@ -133,7 +116,6 @@ function APBoot.acceptDep(tmp, final, dep)
 	return APBoot.acceptDownload(tmp, final, size)
 end
 
--- Есть ли среди проблем обязательные файлы.
 function APBoot.hasRequired(problems)
 	for _, dep in ipairs(problems) do
 		if not dep.optional then return true end
@@ -141,14 +123,11 @@ function APBoot.hasRequired(problems)
 	return false
 end
 
--- Запускать ли загрузчик: всегда, если не хватает обязательных файлов (он сам скажет, что попытки
--- кончились); если только необязательных - пока есть попытки, иначе скрипт запускается без них.
 function APBoot.shouldRun(problems, used)
 	if #problems == 0 then return false end
 	return APBoot.hasRequired(problems) or used < APBoot.MAX_ATTEMPTS
 end
 
--- Тесты загружают файл только до этой строки: дальше нужен API MoonLoader.
 if APBOOT_TEST then return APBoot end
 
 script_name('samp-audio-player')
@@ -177,10 +156,10 @@ function APBoot.download(url, path, label, font, timeoutSec)
 	local deadline = os.time() + timeout
 	os.remove(path)
 	downloadUrlToFile(url, path, function(_, status)
-		if status == 58 then -- STATUSEX_ENDDOWNLOAD
+		if status == 58 then
 			done = true
 		else
-			deadline = os.time() + timeout -- любой прогресс продлевает ожидание
+			deadline = os.time() + timeout
 		end
 	end)
 	local _, resY = getScreenResolution()
@@ -235,8 +214,6 @@ function APBoot.run(problems)
 		return
 	end
 	if #failed > 0 then
-		-- Не скачались только необязательные файлы: плеер запускается без них, а до конца окна попыток
-		-- загрузчик их больше не ждёт (кнопка «Загрузить» во вкладке «Скрипты» начинает заново).
 		APBoot.writeState(statePath, APBoot.MAX_ATTEMPTS, os.time())
 		sampAddChatMessage('Audio Player | {FFFFFF}Каталог скриптов не загрузился, плеер запускается без него.', 0xC0C0C0)
 		thisScript():reload()
@@ -252,9 +229,6 @@ do
 		local ok, mod = pcall(require, m)
 		return ok and APBoot.versionOk(mod, dep)
 	end)
-	-- Не хватает файлов: main заменяется загрузчиком, а return выходит из всей склейки,
-	-- чтобы остальной код с его require не выполнялся. Не хватает только необязательных, а попытки
-	-- кончились - скрипт запускается без них.
 	local used = APBoot.attemptsUsed(APBoot.readState(APBoot.statePath()), os.time())
 	if APBoot.shouldRun(problems, used) then
 		function main() APBoot.run(problems) end
@@ -263,8 +237,6 @@ do
 	if #problems == 0 then os.remove(APBoot.statePath()) end
 	script_dependencies('imgui', 'inicfg', 'fAwesome5', 'encoding', 'lfs')
 end
--- Чистая логика плеера (без API MoonLoader): её проверяют tests/logic_test.lua.
--- Функции перенесены из SNHelper без изменений, кроме имени таблицы.
 local APLogic = {}
 
 function APLogic.clamp(v, lo, hi)
@@ -273,7 +245,6 @@ function APLogic.clamp(v, lo, hi)
 	return v
 end
 
--- Экспоненциальное приближение к цели: одинаково выглядит при любом FPS.
 function APLogic.approach(current, target, dt, speed)
 	if dt <= 0 then return current end
 	local nextValue = current + (target - current) * (1 - math.exp(-speed * dt))
@@ -281,7 +252,6 @@ function APLogic.approach(current, target, dt, speed)
 	return nextValue
 end
 
--- Клавиши, которые нельзя назначить на открытие окна: модификаторы, Enter, пробел, Tab, Esc, T и F6 (чат).
 APLogic.UNBINDABLE_KEYS = { [0x0D] = true, [0x20] = true, [0x09] = true, [0x1B] = true, [0x54] = true, [0x75] = true }
 function APLogic.isBindableKey(vk)
 	if type(vk) ~= 'number' or vk <= 0 then return false end
@@ -290,8 +260,6 @@ function APLogic.isBindableKey(vk)
 	return not APLogic.UNBINDABLE_KEYS[vk]
 end
 
--- Радио: что делать с заданием открытия потока (оно идёт в отдельном системном потоке).
--- job.done - поток открылся или BASS вернул ошибку; job.current - это задание ещё ждёт игрок.
 function APLogic.radioJobStep(job, now, timeout)
 	if not job.done then
 		if job.current and now - (job.startedAt or now) >= timeout then return 'timeout' end
@@ -302,7 +270,6 @@ function APLogic.radioJobStep(job, now, timeout)
 	return ok and 'free' or 'drop'
 end
 
--- BASS_ChannelIsActive -> состояние как у getAudioStreamState: 1 играет, 2 пауза, -1 остановлен.
 function APLogic.bassState(active)
 	if active == 1 or active == 2 then return 1 end
 	if active == 3 then return 2 end
@@ -322,9 +289,6 @@ function APLogic.bassErrorText(code)
 	return APLogic.BASS_ERRORS[code] or ('ошибка BASS '..tostring(code))
 end
 
--- Уведомления: очередь { text, seconds, startAt }. Одновременно видно не больше maxVisible,
--- остальные ждут. Показ начинается, когда освободилось место; появление 0.2 с, исчезание 0.5 с.
--- Возвращает видимые { item, alpha } в порядке очереди; истёкшие удаляет из очереди.
 function APLogic.toastUpdate(queue, now, maxVisible)
 	for i = #queue, 1, -1 do
 		local item = queue[i]
@@ -341,9 +305,6 @@ function APLogic.toastUpdate(queue, now, maxVisible)
 	return shown
 end
 
--- Окно плеера (src/view.lua)
-
--- Время «м:сс» или «ч:мм:сс».
 function APLogic.formatTime(sec)
 	sec = math.floor(tonumber(sec) or 0)
 	if sec < 0 then sec = 0 end
@@ -352,21 +313,18 @@ function APLogic.formatTime(sec)
 	return ('%d:%02d'):format(m, s)
 end
 
--- Нижний регистр строки UTF-8: латиница и кириллица (А-Я, Ё). Нужен для поиска по спискам ImGui.
 function APLogic.utf8Lower(text)
 	return (text:gsub('[%z\1-\127\194-\244][\128-\191]*', function(ch)
 		if #ch == 1 then return ch:lower() end
 		if #ch ~= 2 then return ch end
 		local a, b = ch:byte(1, 2)
-		if a == 0xD0 and b >= 0x90 and b <= 0x9F then return string.char(0xD0, b + 0x20) end -- А-П
-		if a == 0xD0 and b >= 0xA0 and b <= 0xAF then return string.char(0xD1, b - 0x20) end -- Р-Я
-		if a == 0xD0 and b == 0x81 then return string.char(0xD1, 0x91) end -- Ё
+		if a == 0xD0 and b >= 0x90 and b <= 0x9F then return string.char(0xD0, b + 0x20) end
+		if a == 0xD0 and b >= 0xA0 and b <= 0xAF then return string.char(0xD1, b - 0x20) end
+		if a == 0xD0 and b == 0x81 then return string.char(0xD1, 0x91) end
 		return ch
 	end))
 end
 
--- Порядок строк списка: только подходящие под запрос (подстрока без учёта регистра, пробелы по краям
--- не считаются), сначала избранные (fav[индекс] = true), в остальном - исходный порядок.
 function APLogic.listOrder(names, query, fav)
 	local q = APLogic.utf8Lower(tostring(query or '')):match('^%s*(.-)%s*$')
 	local first, rest = {}, {}
@@ -379,7 +337,6 @@ function APLogic.listOrder(names, query, fav)
 	return first
 end
 
--- Избранные станции в ini: адреса потоков через «|».
 function APLogic.favParse(text)
 	local set = {}
 	for part in tostring(text or ''):gmatch('[^|]+') do set[part] = true end
@@ -393,8 +350,6 @@ function APLogic.favText(set)
 	return table.concat(list, '|')
 end
 
--- Высоты столбиков индикатора (0.15..1) в момент t: сумма синусов с разной частотой и фазой у каждого
--- столбика. Это имитация: настоящий спектр звука не читается.
 function APLogic.eqBars(t, n)
 	local bars = {}
 	for i = 1, n do
@@ -404,8 +359,6 @@ function APLogic.eqBars(t, n)
 	return bars
 end
 
--- Сколько секунд трек уже играл: st = { key, elapsed, last }. key - текущий поток (новый поток - отсчёт
--- с нуля), playing - играет ли сейчас; время на паузе не считается.
 function APLogic.elapsedStep(st, key, playing, now)
 	if st.key ~= key then
 		st.key, st.elapsed = key, 0
@@ -417,15 +370,12 @@ function APLogic.elapsedStep(st, key, playing, now)
 	return st.elapsed
 end
 
--- Доля прослушанного трека 0..1 или nil, если длина неизвестна.
 function APLogic.progress(elapsed, length)
 	length = tonumber(length)
 	if not length or length <= 0 then return nil end
 	return math.max(0, math.min(1, (tonumber(elapsed) or 0) / length))
 end
 
--- Состояние для строки «Сейчас играет»: info = { loading = секунды подключения, error = текст,
--- state = 1 играет / 2 пауза / -1 остановлен }. Возвращает вид и текст (CP1251).
 function APLogic.playerStatus(info)
 	if info.loading then return 'loading', 'Подключение... ' .. info.loading .. ' с' end
 	if info.error then return 'error', info.error end
@@ -438,20 +388,17 @@ function APLogic.trackTitle(file)
 	return (tostring(file):gsub('%.[mM][pP]3$', ''))
 end
 
--- Значок громкости: 'off' (0), 'down' (до половины), 'up'.
 function APLogic.volumeIcon(v)
 	if v <= 0.001 then return 'off' end
 	if v < 0.5 then return 'down' end
 	return 'up'
 end
 
--- Громкость по положению мыши на дорожке ползунка (x0 - левый край, w - ширина).
 function APLogic.volumeFromX(mx, x0, w)
 	if w <= 0 then return 0 end
 	return math.max(0, math.min(1, (mx - x0) / w))
 end
 
--- Предыдущий / следующий по кругу: i + step в пределах 1..n.
 function APLogic.wrapIndex(i, step, n)
 	if n <= 0 then return 1 end
 	return (i - 1 + step) % n + 1
@@ -471,7 +418,6 @@ function APLogic.confirmPress(state, id, now, window)
 end
 
 if APLOGIC_TEST then return APLogic end
--- Тема и элементы интерфейса - часть ui.lua из SNHelper (те же цвета и кнопки), без лишних элементов.
 local APUI = { animations = true, fontBase = nil, fontLarge = nil }
 do
 	local imgui = require 'imgui'
@@ -547,9 +493,6 @@ do
 		end
 	end
 
-	-- Кнопка собственной отрисовки с плавным наведением.
-	-- kind: nil | 'primary' | 'danger' (фон подтверждения) | 'dangerText' (обычный фон, красный текст).
-	-- animKey: необязательный ключ анимации наведения; по умолчанию полная подпись кнопки.
 	function APUI.button(label, kind, size, animKey)
 		local text = label:match('^(.-)##') or label
 		local textSize = imgui.CalcTextSize(text)
@@ -595,21 +538,15 @@ do
 		return current
 	end
 
-	-- Раскладка строки. Все элементы строки (кнопка, поле, переключатель, подпись) имеют одну высоту,
-	-- высоту рамки, и центрируются в ней по вертикали, как элементы flex-строки с align-items: center.
-
-	-- Высота кнопки и поля ввода при текущем шрифте.
 	function APUI.frameHeight()
 		return imgui.GetFontSize() + imgui.GetStyle().FramePadding.y * 2
 	end
 
-	-- Ширина, которую займёт APUI.button с такой подписью.
 	function APUI.buttonWidth(label)
 		local text = label:match('^(.-)##') or label
 		return imgui.CalcTextSize(text).x + imgui.GetStyle().FramePadding.x * 2
 	end
 
-	-- Текст в строке с кнопками и полями: встаёт по центру их высоты. color необязателен.
 	function APUI.label(text, color)
 		imgui.AlignTextToFramePadding()
 		if color then
@@ -619,10 +556,6 @@ do
 		end
 	end
 
-	-- Продолжает строку у правого края: следующий элемент шириной width встанет вплотную к нему.
-	-- SameLine(x) считает x от левого края окна, а не от начала содержимого: правая граница берётся из
-	-- GetWindowContentRegionMax (в координатах окна, с учётом отступа и полосы прокрутки).
-	-- Внутри BeginGroup не годится: там SameLine(x) считает от начала группы.
 	function APUI.alignRight(width)
 		imgui.SameLine(math.max(0, imgui.GetWindowContentRegionMax().x - width))
 	end
@@ -635,7 +568,6 @@ do
 
 	local CONFIRM_SECONDS = 3
 	local confirm = { id = nil, time = 0 }
-	-- Опасная кнопка: первое нажатие меняет подпись на «Точно?», второе в течение CONFIRM_SECONDS подтверждает.
 	function APUI.dangerButton(id, label, size)
 		local now = os.time()
 		local pending = APLogic.isPending(confirm, id, now, CONFIRM_SECONDS)
@@ -646,13 +578,10 @@ do
 		return false
 	end
 
-	-- Ширина опасной кнопки, в которую помещается и подпись, и «Точно?».
 	function APUI.dangerButtonWidth(label)
 		return math.max(APUI.buttonWidth(label), APUI.buttonWidth(u8'Точно?'))
 	end
 
-	-- Сворачиваемая справка («Как проводить») вверху вкладки: строка-заголовок на всю ширину и, если
-	-- раскрыта, строки lines с переносом по ширине панели. Тексты в UTF-8. Возвращает новое состояние open.
 	function APUI.helpBlock(id, title, lines, open)
 		local w, h = imgui.GetWindowContentRegionWidth(), APUI.frameHeight()
 		local pos = imgui.GetCursorScreenPos()
@@ -675,8 +604,6 @@ do
 		return open
 	end
 
-	-- Уведомления в правом нижнем углу.
-	-- text в CP1251, как в чате; рисует APUI.drawToasts() из imgui.OnDrawFrame.
 	APUI.toasts = {}
 	function APUI.notify(text, seconds)
 		local queue = APUI.toasts
@@ -684,7 +611,6 @@ do
 		queue[#queue + 1] = { text = tostring(text), seconds = tonumber(seconds) or 4 }
 	end
 
-	-- Для imgui.Process: кадры ImGui нужны, пока есть уведомления.
 	function APUI.toastsActive()
 		return #APUI.toasts > 0
 	end
@@ -698,7 +624,6 @@ do
 			+ imgui.WindowFlags.NoScrollbar + imgui.WindowFlags.NoSavedSettings + imgui.WindowFlags.NoFocusOnAppearing
 			+ imgui.WindowFlags.NoInputs + imgui.WindowFlags.NoMove
 		local padX, padY, gap, margin, bar = 12, 9, 6, 16, 3
-		-- Общее оформление всех уведомлений: ставится до цикла и снимается после него, на одном уровне.
 		imgui.PushStyleVar(imgui.StyleVar.WindowRounding, 8)
 		imgui.PushStyleVar(imgui.StyleVar.WindowPadding, V2(padX, padY))
 		imgui.PushStyleColor(imgui.Col.WindowBg, V4(C.window.x, C.window.y, C.window.z, 0.94))
@@ -732,10 +657,6 @@ do
 		imgui.PopStyleVar(2)
 	end
 end
--- Аудиоплеер для MoonLoader: радиостанции и треки (mp3) из папки на компьютере.
--- Воспроизведение перенесено из SNHelper без изменений: те же станции, фоновое подключение к станции,
--- повтор трека, громкость. Свои окно (src/view.lua), команда (/aplayer), клавиша (по умолчанию F12)
--- и настройки (moonloader/config/samp-audio-player.ini).
 local hook = require 'lib.samp.events'
 require 'lib.moonloader'
 
@@ -746,13 +667,10 @@ local encoding = require 'encoding'
 local as_action = require('moonloader').audiostream_state
 local lfs = require 'lfs'
 
--- Скрипт собирается в CP1251, как чат игры, а ImGui ждёт UTF-8: строки для imgui.* оборачиваются в u8(...).
 encoding.default = 'CP1251'
 local u8 = encoding.UTF8
 
 local fa_glyph_ranges = imgui.ImGlyphRanges({ fa.min_range, fa.max_range })
--- Шрифты добавляются один раз перед первым кадром. В шрифте интерфейса только кириллица и латиница:
--- в строках интерфейса нельзя использовать длинное тире и символ многоточия.
 function imgui.BeforeDrawFrame()
 	if apFontsLoaded then return end
 	apFontsLoaded = true
@@ -780,7 +698,6 @@ function imgui.BeforeDrawFrame()
 			fonts:AddFontFromFileTTF(iconFont, 13.0, merge, fa_glyph_ranges)
 		end
 		APUI.fontLarge = fonts:AddFontFromFileTTF(file, 21.0, nil, cyrillic)
-		-- Значки и в крупном шрифте: ими рисуются большая кнопка «Играть» и обложка в «Сейчас играет».
 		if doesFileExist(iconFont) then
 			local merge = imgui.ImFontConfig()
 			merge.MergeMode = true
@@ -790,14 +707,12 @@ function imgui.BeforeDrawFrame()
 end
 
 local resX, resY = getScreenResolution()
-local cfgpath = 'samp-audio-player' -- moonloader/config/samp-audio-player.ini
+local cfgpath = 'samp-audio-player'
 local data = nil
-local DEFAULT_KEY = 0x7B -- F12
+local DEFAULT_KEY = 0x7B
 local apWindow = imgui.ImBool(false)
 local apKeyCapture = false
 local apWindowPos = nil
-
--- Плеер и радио
 
 local 	musics				= {}
 local 	current_music 		= 1
@@ -809,7 +724,6 @@ local volume_player				= imgui.ImFloat(1)
 local music_repeat = imgui.ImBool(false)
 local musicpath = imgui.ImBuffer('', 256)
 
--- Станции: { название, адрес потока }. Только обычный HTTP: на HTTPS-потоках игра под CrossOver зависала. Проверены 16.11.2026.
 local radio_stations = {
 	{ 'Europa Plus', 'http://ep256.hostingradio.ru:8052/europaplus256.mp3' },
 	{ 'DFM', 'http://dfm.hostingradio.ru/dfm128.mp3' },
@@ -849,7 +763,6 @@ for _, station in ipairs(radio_stations) do
 	radio_items[name] = station[2]
 end
 
--- Текст, обрезанный многоточием по ширине (UTF-8).
 local function apFitText(text, maxWidth)
 	if imgui.CalcTextSize(text).x <= maxWidth then return text end
 	local chars = {}
@@ -866,12 +779,11 @@ local function apFitText(text, maxWidth)
 	return '...'
 end
 
--- Подсказка при наведении на предыдущий элемент.
 local apHintAt = nil
 function imgui.Hint(text, delay)
 	if imgui.IsItemHovered() then
 		if apHintAt == nil then apHintAt = os.clock() + (delay and delay or 0.0) end
-		local alpha = (os.clock() - apHintAt) * 6 -- скорость появления
+		local alpha = (os.clock() - apHintAt) * 6
 		if os.clock() >= apHintAt then
 			imgui.PushStyleVar(imgui.StyleVar.Alpha, (alpha <= 1.0 and alpha or 1.0))
 				imgui.PushStyleColor(imgui.Col.PopupBg, imgui.GetStyle().Colors[imgui.Col.ButtonHovered])
@@ -890,23 +802,12 @@ end
 local currentPage = 1
 local audioStream = nil
 
--- Станции открываются через BASS в отдельном системном потоке. BASS_StreamCreateURL держит
--- вызвавший поток, пока не подключится и не разберёт формат; на AAC под Wine это может длиться
--- бесконечно, а loadAudioStream вызывается в главном потоке игры, и игра замирала.
--- Поэтому игра не ждёт: apRadioPoll() каждый кадр смотрит, готово ли задание.
--- Задание (структура apRadioJob) живёт в памяти вне сборщика мусора: поток может закончить
--- работу когда угодно, даже после выгрузки скрипта. Треки из папки открываются через loadAudioStream:
--- локальный файл открывается сразу.
 apRadio = { jobs = {}, handle = nil, job = nil, ready = nil, TIMEOUT = 15, MAX_HUNG = 4 }
 
 do
 	local ffi = require 'ffi'
 	local bass, kernel, thunk
 
-	-- x86, stdcall ThreadProc(job): BASS_SetDevice(job.device);
-	-- job.handle = BASS_StreamCreateURL(job.url, 0, job.flags, NULL, NULL);
-	-- job.err = BASS_ErrorGetCode(); job.done = 1; return 0. Lua в этом потоке не выполняется.
-	-- Смещения полей: create 0, url 4, flags 8, handle 12, errorCode 16, err 20, setDevice 24, device 28, done 32.
 	local THUNK_HEX = '8B44240453' .. '89C3' .. 'FF731C' .. 'FF5318' .. '6A00' .. '6A00' .. 'FF7308' .. '6A00'
 		.. 'FF7304' .. 'FF13' .. '89430C' .. 'FF5310' .. '894314' .. 'C7432001000000' .. '5B' .. '31C0' .. 'C20400'
 
@@ -929,7 +830,6 @@ do
 		'int __stdcall CloseHandle(void *handle);',
 	}
 
-	-- Подготовить FFI и машинный код один раз; false - фоновое открытие недоступно.
 	function apRadioInit()
 		if apRadio.ready ~= nil then return apRadio.ready end
 		apRadio.ready = false
@@ -942,7 +842,7 @@ do
 			kernel = ffi.load('kernel32')
 			local code = (THUNK_HEX:gsub('%x%x', function(h) return string.char(tonumber(h, 16)) end))
 			assert(#code == 49, 'длина кода')
-			thunk = kernel.VirtualAlloc(nil, #code, 0x3000, 0x40) -- MEM_COMMIT|MEM_RESERVE, PAGE_EXECUTE_READWRITE
+			thunk = kernel.VirtualAlloc(nil, #code, 0x3000, 0x40)
 			assert(thunk ~= nil, 'VirtualAlloc')
 			ffi.copy(thunk, code, #code)
 		end)
@@ -951,7 +851,6 @@ do
 		return ok
 	end
 
-	-- Начать открытие потока. Возвращает true или false и причину.
 	function apRadioOpen(url, name)
 		apRadioCancel()
 		local hung = 0
@@ -959,7 +858,7 @@ do
 			if job.c.done == 0 then hung = hung + 1 end
 		end
 		if hung >= apRadio.MAX_HUNG then return false, 'уже '..hung..' станции не отвечают, подождите' end
-		local mem = kernel.LocalAlloc(0x40, ffi.sizeof('apRadioJob') + #url + 1) -- LPTR: обнулённая память
+		local mem = kernel.LocalAlloc(0x40, ffi.sizeof('apRadioJob') + #url + 1)
 		if mem == nil then return false, 'нет памяти' end
 		local c = ffi.cast('apRadioJob*', mem)
 		local urlMem = ffi.cast('char*', mem) + ffi.sizeof('apRadioJob')
@@ -982,7 +881,6 @@ do
 		return true
 	end
 
-	-- Игрок больше не ждёт текущее открытие (выбрал другое, Stop, трек); поток доработает сам.
 	function apRadioCancel()
 		if apRadio.job then
 			apRadio.job.current = false
@@ -990,7 +888,6 @@ do
 		end
 	end
 
-	-- Секунды с начала текущего открытия или nil, если ничего не открывается.
 	function apRadioLoadingSeconds()
 		if not apRadio.job then return nil end
 		return math.floor(os.clock() - apRadio.job.startedAt)
@@ -1007,7 +904,7 @@ do
 		if apRadio.handle then bass.BASS_ChannelPlay(apRadio.handle, 0) end
 	end
 	function apRadioVolume(value)
-		if apRadio.handle then bass.BASS_ChannelSetAttribute(apRadio.handle, 2, value) end -- BASS_ATTRIB_VOL
+		if apRadio.handle then bass.BASS_ChannelSetAttribute(apRadio.handle, 2, value) end
 	end
 	function apRadioFree()
 		apRadioCancel()
@@ -1024,7 +921,6 @@ do
 		APUI.notify('Станция '..job.name..' не открылась:\n'..reason..'.\nВыберите другую.', 6)
 	end
 
-	-- Каждый кадр: забрать готовые задания. Повторных попыток нет - только по клику игрока.
 	function apRadioPoll()
 		if #apRadio.jobs == 0 then return end
 		local now = os.clock()
@@ -1060,7 +956,6 @@ do
 	end
 end
 
--- Остановить и освободить текущий поток (станции или трека) и забыть открытие станции.
 function apReleaseStream()
 	apRadioFree()
 	if audioStream then
@@ -1070,7 +965,6 @@ function apReleaseStream()
 	end
 end
 
--- Загрузить и запустить текущий трек списка (старый поток освобождается).
 function apPlayTrack()
 	apReleaseStream()
 	apLastRestart = os.clock()
@@ -1088,7 +982,6 @@ function apPlayTrack()
 	end
 end
 
--- Загрузить и запустить выбранную станцию (старый поток освобождается).
 function apPlayStation()
 	apReleaseStream()
 	apStreamIsTrack = false
@@ -1097,7 +990,6 @@ function apPlayStation()
 	local stationUrl = stationName and radio_items[stationName]
 	if not stationUrl then return end
 	if apRadioInit() then
-		-- Фоново: игра не ждёт, результат заберёт apRadioPoll().
 		icon_play_pause = fa.ICON_FA_PLAY
 		local ok, reason = apRadioOpen(stationUrl, u8:decode(stationName))
 		if not ok then
@@ -1106,7 +998,6 @@ function apPlayStation()
 		end
 		return
 	end
-	-- Запасной путь, если фоновое открытие недоступно: игра ждёт подключения в главном потоке.
 	audioStream = loadAudioStream(stationUrl)
 	if audioStream then
 		setAudioStreamVolume(audioStream, volume_player.v)
@@ -1119,10 +1010,6 @@ function apPlayStation()
 	end
 end
 
--- Действия плеера. Тела перенесены без изменений из прежней панели (кнопки «Выбор», играть/пауза,
--- стоп, повтор, предыдущий и следующий трек, ползунок громкости); окно (src/view.lua) только вызывает их.
-
--- «Выбор» папки: найти mp3, запомнить папку; играющий поток останавливается.
 function apScanFolder()
 	if doesDirectoryExist(u8:decode(musicpath.v)) then
 		local found = {}
@@ -1149,7 +1036,6 @@ function apScanFolder()
 	end
 end
 
--- Список треков сохранённой папки при запуске скрипта: без сообщений и без остановки звука (он ещё не играет).
 function apLoadFolderQuiet()
 	local path = u8:decode(musicpath.v)
 	if not doesDirectoryExist(path) then return end
@@ -1168,7 +1054,6 @@ end
 
 function apTogglePlay()
 	if apRadio.job then
-		-- Идёт подключение к станции: второй раз не открываем.
 	elseif apRadio.handle then
 		local state = apRadioState()
 		if state == 1 then
@@ -1232,7 +1117,6 @@ function apNextTrack()
 	apPlayTrack()
 end
 
--- Громкость 0..1: сразу в играющий поток; в ini сохраняется, когда отпущена кнопка мыши (см. src/view.lua).
 function apSetVolume(value)
 	volume_player.v = value
 	if audioStream then
@@ -1243,12 +1127,10 @@ function apSetVolume(value)
 	apVolumeDirty = true
 end
 
--- Что сейчас источник: треки (играет или выбран трек из папки) или радио.
 function apSourceIsTracks()
 	return #musics > 0 and (apStreamIsTrack or (currentPage == 2 and not apRadio.job and not apRadio.handle))
 end
 
--- Предыдущий / следующий: для треков - как раньше, для радио - соседняя станция списка.
 function apStep(step)
 	if apSourceIsTracks() then
 		if step < 0 then apPrevTrack() else apNextTrack() end
@@ -1258,7 +1140,6 @@ function apStep(step)
 	end
 end
 
--- Строка списка: станция i (как выбор в прежнем выпадающем списке) или трек i.
 function apPlayStationAt(i)
 	current_radio.v = i - 1
 	apPlayStation()
@@ -1269,7 +1150,6 @@ function apPlayTrackAt(i)
 	apPlayTrack()
 end
 
--- Избранные станции: адреса потоков в data.music.favorites.
 local apFavorites = {}
 function apIsFavorite(i)
 	local station = radio_stations[i]
@@ -1293,7 +1173,6 @@ local function apKeyName(code)
 	return require('vkeys').id_to_name(code) or tostring(code)
 end
 
--- Строка настройки клавиши окна: текущая клавиша, «Назначить» и «Сбросить» (к F12).
 local function apDrawKeyRow()
 	local key = tonumber(data.window.key) or 0
 	local spacing = imgui.GetStyle().ItemSpacing.x
@@ -1321,8 +1200,6 @@ end
 
 APUI.applyStyle()
 
--- Мини-режим может висеть на экране без курсора, пока игрок ездит и играет: тогда окно не ловит мышь,
--- а кнопки «Полное окно» и «Закрыть» спрятаны. apMiniCursor - курсор, включённый клавишей окна.
 apMiniCursor = true
 local apPinnedHintShown = false
 
@@ -1330,7 +1207,6 @@ function apIsMini()
 	return data ~= nil and (data.window.mini == true or data.window.mini == 'true')
 end
 
--- Можно ли сейчас нажимать кнопки мини-плеера: свой курсор или курсор SA-MP (диалог, другой скрипт).
 function apCursorOn()
 	if not apIsMini() or apMiniCursor then return true end
 	local ok, active = pcall(sampIsCursorActive)
@@ -1346,7 +1222,6 @@ local function apPinCursorOff()
 	end
 end
 
--- Клавиша окна и /aplayer: открыть или закрыть окно; у открытого мини-плеера - включить или убрать курсор.
 function apHotkey()
 	if apWindow.v and apIsMini() then
 		if apMiniCursor then apPinCursorOff() else apMiniCursor = true end
@@ -1357,7 +1232,7 @@ function apHotkey()
 end
 
 function onWindowMessage(msg, wparam, lparam)
-	if msg ~= 0x100 then return end -- WM_KEYDOWN
+	if msg ~= 0x100 then return end
 	if apKeyCapture then
 		if not apWindow.v or not data then
 			apKeyCapture = false
@@ -1375,7 +1250,6 @@ function onWindowMessage(msg, wparam, lparam)
 			return
 		end
 	end
-	-- Esc закрывает окно; у мини-плеера только убирает курсор (полоска остаётся). Без курсора Esc - игре.
 	if wparam == VK_ESCAPE and apWindow.v and (not apIsMini() or apMiniCursor)
 		and not isPauseMenuActive() and not sampIsChatInputActive() and not sampIsDialogActive() then
 		consumeWindowMessage(true, false)
@@ -1383,27 +1257,24 @@ function onWindowMessage(msg, wparam, lparam)
 		return
 	end
 	local key = tonumber(data and data.window and data.window.key) or 0
-	local repeated = math.floor(lparam / 0x40000000) % 2 == 1 -- бит 30: клавиша уже была нажата (автоповтор)
+	local repeated = math.floor(lparam / 0x40000000) % 2 == 1
 	if key ~= 0 and wparam == key and not repeated and not (apWindow.v and imgui.GetIO().WantTextInput)
 		and not sampIsChatInputActive() and not sampIsDialogActive() and not isPauseMenuActive() then
 		apHotkey()
 	end
 end
 
--- Пока играет музыка плеера, звук, который включает сервер, не запускается (как в SNHelper).
 function hook.onPlayAudioStream()
 	if (audioStream and getAudioStreamState(audioStream) == 1) or apRadioState() == 1 then
 		return false
 	end
 end
 
--- Ключи положения окна в ini: у полного окна posX/posY, у мини-плеера свои miniX/miniY.
 function apPosKeys(mini)
 	if mini then return 'miniX', 'miniY' end
 	return 'posX', 'posY'
 end
 
--- Запомнить положение окна для текущего режима.
 local function apSaveWindowPos()
 	if not data or not apWindowPos then return end
 	local kx, ky = apPosKeys(apIsMini())
@@ -1413,7 +1284,6 @@ local function apSaveWindowPos()
 	end
 end
 
--- Переключить мини-режим: положение уходящего режима запоминается, курсор остаётся.
 function apSetMini(on)
 	apSaveWindowPos()
 	data.window.mini = on
@@ -1423,7 +1293,7 @@ end
 
 function onScriptTerminate(script, quitGame)
 	if script ~= thisScript() then return end
-	apRadioFree() -- поток станции открыт не через MoonLoader, сам он его не освободит
+	apRadioFree()
 	apSaveWindowPos()
 end
 
@@ -1434,16 +1304,16 @@ function main()
 			path = 'C:\\Users\\User\\Music',
 			rep = false,
 			volume = 100,
-			favorites = '', -- избранные станции: адреса потоков через «|»
+			favorites = '',
 		},
 		window = {
 			key = DEFAULT_KEY,
-			posX = -1, -- левый верхний угол окна; -1 - по центру экрана
+			posX = -1,
 			posY = -1,
-			miniX = -1, -- то же для мини-плеера; -1 - там, где было полное окно
+			miniX = -1,
 			miniY = -1,
-			mini = false, -- мини-режим: узкая полоска с названием и кнопками
-			catalogHelp = false, -- справка раздела «Скрипты» раскрыта
+			mini = false,
+			catalogHelp = false,
 		},
 	}, cfgpath)
 	music_repeat.v = data.music.rep == true or data.music.rep == 'true'
@@ -1464,7 +1334,6 @@ function main()
 		wait(0)
 		apRadioPoll()
 		apViewTick()
-		-- Повтор трека: поток есть, повтор включён, пользователь не нажимал Stop, не чаще раза в секунду.
 		if audioStream and apStreamIsTrack and not apStoppedByUser and musics[current_music] then
 			local state = getAudioStreamState(audioStream)
 			if state == -1 or state == as_action.STOP then
@@ -1488,18 +1357,10 @@ function main()
 		wasOpen = apWindow.v
 	end
 end
--- Вкладка «Скрипты»: каталог скриптов GORYCH из общей библиотеки lib/samp-catalog.lua (исходники -
--- samp-catalog/ рядом). Каталог, установка, обновление (и самого плеера), удаление, общие с SNHelper
--- файлы (catalog.state, кэш картинок) - всё в библиотеке. Здесь только связка с плеером: тема окна
--- (APUI), справка, место в окне и то, что показать, если библиотеки нет.
--- Файл идёт в склейке после main.lua: imgui, fa, u8, inicfg, APUI, APBoot, data и apFitText оттуда видны.
---
--- Библиотека - необязательный файл загрузчика (APBoot.CATALOG_DEP): если её не удалось скачать, плеер
--- работает, а вкладка говорит, что каталога нет, и даёт кнопку «Загрузить» (новая попытка загрузчика).
 
 do
 	local V2 = imgui.ImVec2
-	local catalog = nil -- объект каталога; false - библиотеки нет или она старая
+	local catalog = nil
 
 	local theme = {
 		label = APUI.label,
@@ -1546,7 +1407,6 @@ do
 		return catalog
 	end
 
-	-- Библиотеки нет: сказать об этом и дать начать загрузку заново (загрузчик скачает её и перезапустит плеер).
 	local function drawMissing(width, height)
 		local C = APUI.colors
 		imgui.PushStyleColor(imgui.Col.ChildWindowBg, C.field)
@@ -1566,7 +1426,6 @@ do
 		imgui.PopStyleColor()
 	end
 
-	-- Вкладка в окне плеера: панель width x height (той же высоты, что вкладки «Радио» и «Мои треки»).
 	function apDrawCatalog(width, height)
 		local cat = get()
 		if cat then
@@ -1576,17 +1435,6 @@ do
 		end
 	end
 end
--- Окно плеера. Файл идёт в склейке после main.lua: состояние (musics, current_radio, audioStream...) и
--- действия (apTogglePlay, apStep, apSetVolume...) берутся оттуда. Здесь только отрисовка и то, что
--- окно показывает: название, состояние, время трека.
---
--- Окно (сверху вниз): заголовок с кнопками (клавиша, мини-режим, закрыть); строка настройки клавиши
--- (по кнопке); карточка «Сейчас играет» (обложка-значок, название, состояние, индикатор-эквалайзер);
--- время трека или метка «Прямой эфир»; ряд управления (повтор, предыдущий, играть/пауза, следующий,
--- стоп) и громкость; вкладки «Радио» / «Мои треки»; папка с музыкой (на вкладке треков); поиск; список.
--- Мини-режим: одна полоска с обложкой, названием, кнопками и возвратом к полному окну.
---
--- Пары ImGui: каждый Push* снимается в той же функции и том же окне; ранних выходов между ними нет.
 
 local V2, V4 = imgui.ImVec2, imgui.ImVec4
 local FULL_W, MINI_W = 440, 380
@@ -1595,7 +1443,6 @@ local apView = {
 	openT = nil, settings = false, eqT = 0, eqBars = nil,
 	search = { imgui.ImBuffer('', 64), imgui.ImBuffer('', 64) },
 }
--- Что показывает окно: ошибка подключения, время трека, длина трека (см. apViewTick).
 local apNow = { wasLoading = false, error = nil, track = {}, lengthKey = nil, length = nil }
 
 local function u32(color)
@@ -1606,7 +1453,6 @@ local function withAlpha(color, alpha)
 	return V4(color.x, color.y, color.z, color.w * alpha)
 end
 
--- Каждый кадр из main(): заметить, что станция не подключилась, посчитать время трека, узнать его длину.
 function apViewTick()
 	if apRadio.job then
 		apNow.wasLoading = true
@@ -1622,7 +1468,6 @@ function apViewTick()
 	if key ~= apNow.lengthKey then
 		apNow.lengthKey, apNow.length = key, nil
 		if key then
-			-- Длина в секундах; странное значение (0, больше 10 часов) - длина неизвестна.
 			local ok, length = pcall(getAudioStreamLength, audioStream)
 			length = ok and tonumber(length) or nil
 			if length and length > 0 and length < 36000 then apNow.length = length end
@@ -1630,7 +1475,6 @@ function apViewTick()
 	end
 end
 
--- Что играет: название (UTF-8), состояние для APLogic.playerStatus, радио ли это.
 local function apNowPlaying()
 	local loading = apRadioLoadingSeconds()
 	local state = -1
@@ -1656,9 +1500,6 @@ local function apNowPlaying()
 	return title, kind, u8(text), isRadio
 end
 
--- Круглая кнопка со значком в ячейке diameter x boxH (круг по центру высоты: кнопки разного размера
--- в одном ряду стоят по одной средней линии). kind: nil, 'primary' (акцент, значок крупным шрифтом),
--- 'on' / 'off' (переключатель: значок акцентный или погашенный).
 local function apRoundButton(id, icon, diameter, kind, boxH)
 	local C = APUI.colors
 	boxH = boxH or diameter
@@ -1680,15 +1521,12 @@ local function apRoundButton(id, icon, diameter, kind, boxH)
 	local large = kind == 'primary' and APUI.fontLarge
 	if large then imgui.PushFont(APUI.fontLarge) end
 	local size = imgui.CalcTextSize(icon)
-	-- Значок «играть» визуально левее центра: сдвиг на 1/12 диаметра.
 	local nudge = (icon == fa.ICON_FA_PLAY) and diameter / 12 or 0
 	drawList:AddText(V2(center.x - size.x / 2 + nudge, center.y - size.y / 2), u32(textColor), icon)
 	if large then imgui.PopFont() end
 	return pressed
 end
 
--- Индикатор-эквалайзер: count столбиков в прямоугольнике (x, y, w, h). Пока звук идёт, столбики
--- двигаются; на паузе замирают; без звука лежат внизу и гаснут.
 local function apDrawEq(drawList, x, y, w, h, kind, count)
 	local C = APUI.colors
 	local dt = imgui.GetIO().DeltaTime
@@ -1707,7 +1545,6 @@ local function apDrawEq(drawList, x, y, w, h, kind, count)
 	end
 end
 
--- Карточка «Сейчас играет».
 local function apDrawNowCard(width)
 	local C = APUI.colors
 	local title, kind, status, isRadio = apNowPlaying()
@@ -1719,7 +1556,6 @@ local function apDrawNowCard(width)
 	imgui.BeginChild('apnow', V2(width, height), false, imgui.WindowFlags.AlwaysUseWindowPadding + imgui.WindowFlags.NoScrollbar)
 		local drawList = imgui.GetWindowDrawList()
 		local pos = imgui.GetCursorScreenPos()
-		-- Обложка: акцентный квадрат со значком станции или трека.
 		imgui.Dummy(V2(art, art))
 		drawList:AddRectFilled(pos, V2(pos.x + art, pos.y + art), u32(C.navActive), 10)
 		drawList:AddRectFilled(V2(pos.x + 4, pos.y + 4), V2(pos.x + art - 4, pos.y + art - 4), u32(withAlpha(C.accent, 0.85)), 8)
@@ -1728,7 +1564,6 @@ local function apDrawNowCard(width)
 		local iconSize = imgui.CalcTextSize(icon)
 		drawList:AddText(V2(pos.x + (art - iconSize.x) / 2, pos.y + (art - iconSize.y) / 2), u32(C.white), icon)
 		if APUI.fontLarge then imgui.PopFont() end
-		-- Название (крупно) и строка состояния справа от обложки, вместе по центру её высоты.
 		local textX = pos.x + art + 14
 		local textW = width - pad * 2 - art - 14 - eqW - 10
 		local largeH = APUI.fontLarge and 21 or imgui.GetTextLineHeight()
@@ -1742,7 +1577,6 @@ local function apDrawNowCard(width)
 		if kind == 'playing' then statusColor = C.accentSoft elseif kind == 'error' then statusColor = C.danger end
 		local dot = kind == 'error' and fa.ICON_FA_EXCLAMATION_CIRCLE or (kind == 'loading' and fa.ICON_FA_CIRCLE_NOTCH or fa.ICON_FA_CIRCLE)
 		drawList:AddText(V2(textX, top + largeH + 4), u32(statusColor), apFitText(dot .. ' ' .. status, textW))
-		-- Эквалайзер у правого края, по центру высоты обложки.
 		local eqX = pos.x + width - pad * 2 - eqW
 		apDrawEq(drawList, eqX, pos.y + (art - eqH) / 2, eqW, eqH, kind, 6)
 	imgui.EndChild()
@@ -1750,8 +1584,6 @@ local function apDrawNowCard(width)
 	imgui.PopStyleColor()
 end
 
--- Время трека: «прошло», полоса, «всего». Для радио - метка «Прямой эфир». Перемотки нет: MoonLoader
--- не даёт ни узнать, ни поменять позицию в потоке трека.
 local function apDrawTimeline(width)
 	local C = APUI.colors
 	local h = imgui.GetTextLineHeight()
@@ -1782,8 +1614,6 @@ local function apDrawTimeline(width)
 	end
 end
 
--- Громкость своей отрисовки: значок, дорожка, заливка, ручка в ячейке width x h. Тянуть можно, если
--- нажатие началось на дорожке (не на значке).
 local function apVolume(width, h)
 	local C = APUI.colors
 	local knob = 6
@@ -1819,7 +1649,6 @@ local function apVolume(width, h)
 	drawList:AddCircleFilled(V2(x, y), knob + grow, u32(C.white), 16)
 end
 
--- Ряд управления: кнопки по центру своей части, громкость справа. Все элементы ряда - одной высоты big.
 local function apDrawControls(width)
 	local gap = imgui.GetStyle().ItemSpacing.x
 	local small, big = APUI.frameHeight() + 4, math.floor(APUI.frameHeight() * 1.6)
@@ -1850,8 +1679,6 @@ local function apDrawControls(width)
 	apVolume(volumeW, big)
 end
 
--- Строка списка: номер или значок играющей, название, звёздочка (для станций). Возвращает нажатие по
--- строке и по звёздочке.
 local function apListRow(id, i, text, width, active, playing, star)
 	local C = APUI.colors
 	local h = APUI.frameHeight()
@@ -1892,7 +1719,6 @@ local function apListRow(id, i, text, width, active, playing, star)
 	return pressed, starPressed
 end
 
--- Поле поиска: подсказка «Поиск» внутри пустого поля.
 local function apSearchField(buffer, width)
 	local C = APUI.colors
 	local pos = imgui.GetCursorScreenPos()
@@ -1905,13 +1731,11 @@ local function apSearchField(buffer, width)
 	end
 end
 
--- Пустой список: приглушённая строка.
 local function apEmpty(text)
 	imgui.Dummy(V2(0, 4))
 	imgui.TextDisabled(text)
 end
 
--- Список станций или треков в панели высотой height.
 local function apDrawList(width, height)
 	local C = APUI.colors
 	local query = apView.search[currentPage].v
@@ -1970,7 +1794,6 @@ local function apDrawList(width, height)
 	imgui.PopStyleColor()
 end
 
--- Строка папки с музыкой: поле и «Выбор» (как раньше).
 local function apDrawFolderRow(width)
 	local spacing = imgui.GetStyle().ItemSpacing.x
 	local selectLabel = fa.ICON_FA_FOLDER_OPEN .. u8' Выбор'
@@ -1982,7 +1805,6 @@ local function apDrawFolderRow(width)
 	if APUI.button(selectLabel .. '##musicpathselect') then apScanFolder() end
 end
 
--- Кнопки-значки заголовка справа: клавиша, мини-режим, закрыть. x0 - левый край содержимого.
 local function apHeaderButtons(x0, width, mini)
 	local gap = imgui.GetStyle().ItemSpacing.x
 	local keyIcon, modeIcon, closeIcon = fa.ICON_FA_KEYBOARD, mini and fa.ICON_FA_EXPAND or fa.ICON_FA_COMPRESS, fa.ICON_FA_TIMES
@@ -2012,8 +1834,6 @@ local function apDrawFull(x0, width)
 	apDrawTimeline(width)
 	apDrawControls(width)
 	imgui.Dummy(V2(0, 2))
-	-- Третья вкладка «Скрипты» - каталог (src/catalog.lua). Она не меняет currentPage: кнопки плеера
-	-- по-прежнему работают с последней выбранной вкладкой «Радио» или «Мои треки».
 	local tab = apView.catalog and 3 or currentPage
 	tab = APUI.tabs('apsrc', { fa.ICON_FA_BROADCAST_TOWER .. u8' Радио', fa.ICON_FA_FOLDER_OPEN .. u8' Мои треки',
 		fa.ICON_FA_PUZZLE_PIECE .. u8' Скрипты' }, tab)
@@ -2022,24 +1842,21 @@ local function apDrawFull(x0, width)
 	local rowStep = APUI.frameHeight() + imgui.GetStyle().ItemSpacing.y
 	local listH = LIST_ROWS * (APUI.frameHeight() + 2) + 12
 	if apView.catalog then
-		-- Та же высота, что у вкладок со списком (строка поиска + строка папки или запас + список).
 		apDrawCatalog(width, listH + rowStep * 2)
 	else
 		if currentPage == 2 then
 			apDrawFolderRow(width)
 		else
-			listH = listH + rowStep -- без строки папки список выше: окно не меняет высоту при смене вкладки
+			listH = listH + rowStep
 		end
 		apSearchField(apView.search[currentPage], width)
 		apDrawList(width, listH)
 	end
-	-- Неброская подпись внизу окна: версия и автор.
 	local about = u8('Аудиоплеер ' .. tostring(thisScript().version) .. ', автор GORYCH')
 	imgui.SetCursorPosX(x0 + math.max(0, (width - imgui.CalcTextSize(about).x) / 2))
 	imgui.TextColored(C.faint, about)
 end
 
--- Квадратная кнопка-значок высоты кнопки темы по центру ячейки width x boxH (для ряда мини-режима).
 local function apBoxButton(id, icon, boxH)
 	local C = APUI.colors
 	local h = APUI.frameHeight()
@@ -2055,9 +1872,6 @@ local function apBoxButton(id, icon, boxH)
 	return pressed
 end
 
--- Мини-режим: один ряд высоты rowH. Обложка, текст (две строки блоком), круглые и квадратные кнопки -
--- каждый элемент занимает ячейку высоты rowH и рисуется по её вертикальной середине, поэтому поля окна
--- сверху и снизу одинаковые.
 local function apDrawMini(x0, width)
 	local C = APUI.colors
 	local title, kind, status, isRadio = apNowPlaying()
@@ -2068,13 +1882,11 @@ local function apDrawMini(x0, width)
 	local rowH = math.max(small, textH)
 	local art = small
 	local expandIcon, closeIcon = fa.ICON_FA_EXPAND, fa.ICON_FA_TIMES
-	-- Без курсора кнопки «Полное окно» и «Закрыть» не нужны: их место отдаётся названию.
 	local withBox = apCursorOn()
 	local buttonsW = small * 3 + gap * 2
 	if withBox then buttonsW = buttonsW + APUI.buttonWidth(expandIcon) + APUI.buttonWidth(closeIcon) + gap * 2 end
 	local textW = width - art - gap - buttonsW - gap
 	local drawList = imgui.GetWindowDrawList()
-	-- Обложка.
 	local pos = imgui.GetCursorScreenPos()
 	imgui.Dummy(V2(art, rowH))
 	local top = pos.y + (rowH - art) / 2
@@ -2082,7 +1894,6 @@ local function apDrawMini(x0, width)
 	local icon = isRadio and fa.ICON_FA_BROADCAST_TOWER or fa.ICON_FA_MUSIC
 	local iconSize = imgui.CalcTextSize(icon)
 	drawList:AddText(V2(pos.x + (art - iconSize.x) / 2, top + (art - iconSize.y) / 2), u32(C.white), icon)
-	-- Название и состояние блоком по середине ряда.
 	imgui.SameLine()
 	pos = imgui.GetCursorScreenPos()
 	imgui.Dummy(V2(math.max(1, textW), rowH))
@@ -2090,7 +1901,6 @@ local function apDrawMini(x0, width)
 	local statusColor = kind == 'playing' and C.accentSoft or (kind == 'error' and C.danger or C.muted)
 	drawList:AddText(V2(pos.x, textTop), u32(C.white), apFitText(title, textW))
 	drawList:AddText(V2(pos.x, textTop + lineH + 4), u32(statusColor), apFitText(status, textW))
-	-- Кнопки у правого края.
 	imgui.SameLine(x0 + width - buttonsW)
 	local tracks = apSourceIsTracks()
 	if apRoundButton('mprev', fa.ICON_FA_STEP_BACKWARD, small, nil, rowH) then apStep(-1) end
@@ -2119,11 +1929,8 @@ function imgui.OnDrawFrame()
 	end
 	local mini = data.window.mini == true or data.window.mini == 'true'
 	local width = mini and MINI_W or FULL_W
-	-- Поля окна одинаковые со всех сторон.
 	local padX, padY = 16, 16
 	if mini then padX, padY = 12, 12 end
-	-- У полного окна и мини-плеера свои положения. Окно ставится на место при открытии и при смене
-	-- режима, дальше его двигает игрок. Мини-плеер в первый раз появляется там, где было полное окно.
 	local mode = mini and 'mini' or 'full'
 	if apView.placed ~= mode then
 		local kx, ky = apPosKeys(mini)
@@ -2133,7 +1940,6 @@ function imgui.OnDrawFrame()
 		imgui.SetNextWindowPos(imgui.ImVec2(x, y), imgui.Cond.Always)
 		apView.placed = mode
 	end
-	-- Появление окна: прозрачность от 0 до 1 за 0.18 с (как у окна SNHelper).
 	apView.openT = math.min(1, (apView.openT or 0) + imgui.GetIO().DeltaTime / 0.18)
 	local t = 1 - apView.openT
 	if APUI.fontBase then imgui.PushFont(APUI.fontBase) end
@@ -2141,12 +1947,10 @@ function imgui.OnDrawFrame()
 	imgui.PushStyleVar(imgui.StyleVar.WindowPadding, imgui.ImVec2(padX, padY))
 	local flags = imgui.WindowFlags.NoResize + imgui.WindowFlags.NoCollapse + imgui.WindowFlags.NoTitleBar
 		+ imgui.WindowFlags.NoScrollbar + imgui.WindowFlags.AlwaysAutoResize
-	-- Мини-плеер без курсора висит поверх игры: мышь и фокус не забирает, перетащить нельзя.
 	if mini and not apCursorOn() then
 		flags = flags + imgui.WindowFlags.NoInputs + imgui.WindowFlags.NoMove + imgui.WindowFlags.NoFocusOnAppearing
 	end
 	imgui.Begin('##sampaudioplayer', apWindow, flags)
-		-- Внутри окна обычный отступ, чтобы отступ окна не достался подсказкам и панелям.
 		imgui.PushStyleVar(imgui.StyleVar.WindowPadding, imgui.ImVec2(12, 12))
 		local pos = imgui.GetWindowPos()
 		apWindowPos = { x = math.floor(pos.x), y = math.floor(pos.y) }
