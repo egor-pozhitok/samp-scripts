@@ -12,6 +12,7 @@
       "version_num": 10,
       "image": "images/audio-player.png",
       "image_size": 47938,
+      "bug_report": "https://forms.gle/iRgsm3jDUV6QYYL48",
       "main": "AudioPlayer.lua",
       "also": ["samp-audio-player.lua"],
       "files": [
@@ -218,6 +219,7 @@
       "version_num": 1,
       "image": "images/animmaster.png",
       "image_size": 5328,
+      "bug_report": "https://forms.gle/wvMVGADCBQcodvCCA",
       "main": "AnimMaster.lua",
       "files": [
         { "path": "AnimMaster.lua", "size": 379506, "src": "scripts/animmaster/AnimMaster.lua" }
