@@ -62,8 +62,8 @@
       "id": "fishing",
       "name": "FisherMan",
       "description": "Помощник для рыбалки: подсекает по звонку колокольчика и снова забрасывает, продаёт улов, выбрасывает мелкую рыбу. Уведомления и команды через своего бота в Telegram. Окно: /fishing или /fisherman.",
-      "version": "2.4",
-      "version_num": 5,
+      "version": "2.5",
+      "version_num": 6,
       "server": "galaxy",
       "image": "images/fishing.png",
       "image_size": 46078,
@@ -71,7 +71,7 @@
       "main": "samp-fishing.lua",
       "also": ["Fishing.lua"],
       "files": [
-        { "path": "samp-fishing.lua", "size": 309778, "src": "scripts/fishing/samp-fishing.lua" }
+        { "path": "samp-fishing.lua", "size": 307368, "src": "scripts/fishing/samp-fishing.lua" }
       ],
       "deps": [
         { "path": "lib/imgui.lua", "size": 114068, "src": "deps/lib/imgui.lua" },
@@ -100,8 +100,8 @@
       "id": "graffiti",
       "name": "SprayKing",
       "description": "Граффити банд на экране: название, расстояние и линия к ним, выбор банд. Закрашивание по клавише B со скриншотом. Окно: /graffiti или /sprayking.",
-      "version": "3.2",
-      "version_num": 3,
+      "version": "3.3",
+      "version_num": 4,
       "server": "galaxy",
       "image": "images/graffiti.png",
       "image_size": 43019,
@@ -109,7 +109,7 @@
       "main": "samp-graffiti.lua",
       "also": ["graffiti_nontp.lua"],
       "files": [
-        { "path": "samp-graffiti.lua", "size": 220302, "src": "scripts/graffiti/samp-graffiti.lua" }
+        { "path": "samp-graffiti.lua", "size": 224626, "src": "scripts/graffiti/samp-graffiti.lua" }
       ],
       "deps": [
         { "path": "lib/imgui.lua", "size": 114068, "src": "deps/lib/imgui.lua" },
@@ -138,8 +138,8 @@
       "id": "lawguard",
       "name": "LawGuard",
       "description": "Помощник полицейского: обыск и наручники по клавише, отчёт об обыске, подсказки о звёздах, розыск и грабители банков на экране, автопокупка оружия. Окно: /lawguard.",
-      "version": "2.1",
-      "version_num": 2,
+      "version": "2.2",
+      "version_num": 3,
       "server": "galaxy",
       "image": "images/lawguard.png",
       "image_size": 47369,
@@ -147,7 +147,7 @@
       "main": "samp-lawguard.lua",
       "also": ["ForCops.luac", "ForCops.lua"],
       "files": [
-        { "path": "samp-lawguard.lua", "size": 501286, "src": "scripts/lawguard/samp-lawguard.lua" }
+        { "path": "samp-lawguard.lua", "size": 503812, "src": "scripts/lawguard/samp-lawguard.lua" }
       ],
       "deps": [
         { "path": "lib/imgui.lua", "size": 114068, "src": "deps/lib/imgui.lua" },
