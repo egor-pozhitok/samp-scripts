@@ -4,6 +4,8 @@
 -- Запускать из корня репозитория. Формат scripts.json: каждый файл - одна строка вида
 --   { "path": "...", "size": 123, "src": "..." }
 -- Инструмент меняет только число после "size" в таких строках и проверяет, что файлы "src" и "image" есть.
+-- После строки "image" держит строку "image_size" с размером картинки (нет её - вставляет): по нему каталог
+-- (samp-catalog 5+) скачивает заново картинку карточки, если в кэше игрока она другого размера.
 local check = arg[1] == '--check'
 
 local function fileSize(path)
@@ -20,7 +22,24 @@ f:close()
 
 local problems, changed, files = 0, 0, 0
 local out = {}
+local pendingImage = nil -- { path, indent } картинки из прошлой строки: ждёт строку image_size
 for line in (text:gsub('\r', '') .. '\n'):gmatch('(.-)\n') do
+	if pendingImage then
+		local size = fileSize(pendingImage[1])
+		local old = line:match('"image_size"%s*:%s*(%d+)')
+		if not old then
+			if size then
+				print(('%s image_size of %s: none -> %d'):format(check and 'DRIFT' or 'ADD', pendingImage[1], size))
+				changed = changed + 1
+				out[#out + 1] = pendingImage[2] .. '"image_size": ' .. size .. ','
+			end
+		elseif size and tonumber(old) ~= size then
+			print(('%s image_size of %s: %s -> %d'):format(check and 'DRIFT' or 'UPDATE', pendingImage[1], old, size))
+			changed = changed + 1
+			line = line:gsub('("image_size"%s*:%s*)%d+', '%1' .. size, 1)
+		end
+		pendingImage = nil
+	end
 	local src = line:match('"src"%s*:%s*"([^"]+)"')
 	if src then
 		files = files + 1
@@ -44,6 +63,8 @@ for line in (text:gsub('\r', '') .. '\n'):gmatch('(.-)\n') do
 	if image and not fileSize(image) then
 		print('MISSING image ' .. image)
 		problems = problems + 1
+	elseif image then
+		pendingImage = { image, line:match('^(%s*)') }
 	end
 	out[#out + 1] = line
 end

@@ -1,7 +1,7 @@
 -- samp-catalog: каталог скриптов GORYCH для MoonLoader
 local M = {}
 
-M.VERSION = 4
+M.VERSION = 5
 M.RAW = 'https://raw.githubusercontent.com/egor-pozhitok/samp-scripts/'
 M.REPO = M.RAW .. 'main/'
 M.COMMIT_API = 'https://api.github.com/repos/egor-pozhitok/samp-scripts/commits/main'
@@ -69,6 +69,8 @@ local function parseEntry(e, selfSet, shared, ownKey, owners)
 	local num = tonumber(e.version_num)
 	if not num or num < 0 or num ~= math.floor(num) then return nil end
 	if e.image ~= nil and (not M.safePath(e.image) or not e.image:lower():match('%.png$')) then return nil end
+	local imageSize = tonumber(e.image_size)
+	if not imageSize or imageSize <= 0 or imageSize ~= math.floor(imageSize) or imageSize > 4 * 1024 * 1024 then imageSize = nil end
 	if not isMainName(e.main) then return nil end
 	local mainKey = M.normPath(e.main)
 	local function foreignOwner(key) return owners[key] ~= nil and owners[key] ~= e.id end
@@ -104,7 +106,7 @@ local function parseEntry(e, selfSet, shared, ownKey, owners)
 	local server = type(e.server) == 'string' and #e.server <= 40 and e.server:match(ID_PATTERN) and e.server or nil
 	return {
 		id = e.id, name = e.name, description = e.description or '', version = e.version, version_num = num,
-		image = e.image, main = e.main, files = files, deps = deps,
+		image = e.image, image_size = imageSize, main = e.main, files = files, deps = deps,
 		server = server, also = also, removable = e.removable ~= false,
 	}
 end
@@ -475,12 +477,14 @@ function Catalog:fetchImages()
 	for _, entry in ipairs(self.list) do
 		if entry.image then
 			local final = full(M.IMAGE_DIR .. '/' .. entry.id .. '.png')
-			if not doesFileExist(final) then
+			local cached = doesFileExist(final)
+			if not cached or (entry.image_size and fileSize(final) ~= entry.image_size) then
 				local tmp = final .. '.tmp'
 				ensureDir(final)
 				if self:fetchUrl(entry.image, tmp) and M.isPng((readFile(tmp) or ''):sub(1, 8)) then
 					os.remove(final)
 					os.rename(tmp, final)
+					self.textures[entry.id] = nil
 				end
 				os.remove(tmp)
 			end

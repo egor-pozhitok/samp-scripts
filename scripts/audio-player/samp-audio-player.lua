@@ -27,7 +27,7 @@ APBoot.DEPS = {
 	{ path = 'resource/fonts/fa-solid-900.ttf', size = 202744 },
 }
 
-APBoot.CATALOG_DEP = { path = 'lib/samp-catalog.lua', size = 32814, module = 'samp-catalog', optional = true, minVersion = 4 }
+APBoot.CATALOG_DEP = { path = 'lib/samp-catalog.lua', size = 33132, module = 'samp-catalog', optional = true, minVersion = 5 }
 table.insert(APBoot.DEPS, APBoot.CATALOG_DEP)
 
 APBoot.TOAST_DEP = { path = 'lib/samp-toast.lua', size = 1407, module = 'samp-toast', optional = true, minVersion = 1 }
@@ -150,8 +150,8 @@ if APBOOT_TEST then return APBoot end
 script_name('samp-audio-player')
 script_author('GORYCH')
 script_description('Music player: radio stations and tracks from a folder')
-script_version_number(8)
-script_version('1.7')
+script_version_number(9)
+script_version('1.8')
 
 function APBoot.statePath()
 	return getWorkingDirectory() .. '\\config\\samp-audio-player\\bootstrap.state'
