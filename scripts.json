@@ -43,8 +43,8 @@
       "id": "snhelper",
       "name": "SNHelper",
       "description": "Помощник для работы в эфире на сервере Galaxy: мероприятия, правила, счётчики, подсказки.",
-      "version": "1.2",
-      "version_num": 4,
+      "version": "2.0",
+      "version_num": 5,
       "server": "galaxy",
       "removable": false,
       "image": "images/snhelper.png",
@@ -52,7 +52,7 @@
       "main": "SNHelper.lua",
       "also": ["SNHelper.luac"],
       "files": [
-        { "path": "SNHelper.lua", "size": 661031, "src": "scripts/snhelper/SNHelper.lua" }
+        { "path": "SNHelper.lua", "size": 672480, "src": "scripts/snhelper/SNHelper.lua" }
       ],
       "deps": []
     },
