@@ -27,7 +27,7 @@ APBoot.DEPS = {
 	{ path = 'resource/fonts/fa-solid-900.ttf', size = 202744 },
 }
 
-APBoot.CATALOG_DEP = { path = 'lib/samp-catalog.lua', size = 32524, module = 'samp-catalog', optional = true, minVersion = 3 }
+APBoot.CATALOG_DEP = { path = 'lib/samp-catalog.lua', size = 32814, module = 'samp-catalog', optional = true, minVersion = 4 }
 table.insert(APBoot.DEPS, APBoot.CATALOG_DEP)
 
 APBoot.TOAST_DEP = { path = 'lib/samp-toast.lua', size = 1407, module = 'samp-toast', optional = true, minVersion = 1 }
@@ -150,8 +150,8 @@ if APBOOT_TEST then return APBoot end
 script_name('samp-audio-player')
 script_author('GORYCH')
 script_description('Music player: radio stations and tracks from a folder')
-script_version_number(7)
-script_version('1.6')
+script_version_number(8)
+script_version('1.7')
 
 function APBoot.statePath()
 	return getWorkingDirectory() .. '\\config\\samp-audio-player\\bootstrap.state'
@@ -547,7 +547,7 @@ do
 
 	function APUI.tabs(id, labels, current)
 		local spacing = imgui.GetStyle().ItemSpacing.x
-		local width = (imgui.GetWindowContentRegionWidth() - spacing * (#labels - 1)) / #labels
+		local width = (imgui.GetContentRegionAvail().x - spacing * (#labels - 1)) / #labels
 		for i, label in ipairs(labels) do
 			if i > 1 then imgui.SameLine() end
 			if APUI.selectable(label .. '##' .. id .. i, current == i, V2(width, 0)) then
@@ -555,6 +555,51 @@ do
 			end
 		end
 		return current
+	end
+
+	function APUI.easeOut(t)
+		t = math.max(0, math.min(1, t))
+		local inv = 1 - t
+		return 1 - inv * inv * inv
+	end
+
+	function APUI.drawIntro(state, id, first, second)
+		if state.done then return true end
+		local resX, resY = getScreenResolution()
+		state.t = math.min(1, (state.t or 0) + imgui.GetIO().DeltaTime / 0.9)
+		local t = state.t
+		local alpha = math.max(0, math.min(1, t / 0.35, (1 - t) / 0.25))
+		local grow = 0.92 + 0.08 * APUI.easeOut(t / 0.6)
+		imgui.SetNextWindowPos(V2(0, 0), imgui.Cond.Always)
+		imgui.SetNextWindowSize(V2(resX, resY), imgui.Cond.Always)
+		imgui.PushStyleColor(imgui.Col.WindowBg, C.clear)
+		imgui.PushStyleVar(imgui.StyleVar.WindowPadding, V2(0, 0))
+		imgui.Begin('##' .. id .. 'intro', nil, imgui.WindowFlags.NoTitleBar + imgui.WindowFlags.NoResize + imgui.WindowFlags.NoMove
+			+ imgui.WindowFlags.NoScrollbar + imgui.WindowFlags.NoCollapse + imgui.WindowFlags.NoInputs
+			+ imgui.WindowFlags.NoSavedSettings + imgui.WindowFlags.NoFocusOnAppearing)
+			if APUI.fontSplash then imgui.PushFont(APUI.fontSplash) end
+			imgui.SetWindowFontScale(grow)
+			local sizeFirst, sizeSecond = imgui.CalcTextSize(first), imgui.CalcTextSize(second)
+			local left = (resX - sizeFirst.x - sizeSecond.x) / 2
+			local top = (resY - sizeFirst.y) / 2
+			local dl = imgui.GetWindowDrawList()
+			local shadow = imgui.GetColorU32(V4(0, 0, 0, alpha * 0.55))
+			dl:AddText(V2(left + 2, top + 3), shadow, first)
+			dl:AddText(V2(left + sizeFirst.x + 2, top + 3), shadow, second)
+			dl:AddText(V2(left, top), imgui.GetColorU32(V4(C.accentSoft.x, C.accentSoft.y, C.accentSoft.z, alpha)), first)
+			dl:AddText(V2(left + sizeFirst.x, top), imgui.GetColorU32(V4(C.white.x, C.white.y, C.white.z, alpha)), second)
+			imgui.SetWindowFontScale(1)
+			if APUI.fontSplash then imgui.PopFont() end
+		imgui.End()
+		imgui.PopStyleVar()
+		imgui.PopStyleColor()
+		if t >= 1 or (t > 0.15 and imgui.IsMouseClicked(0)) then state.done = true end
+		return state.done
+	end
+
+	function APUI.appear(openT)
+		local a = APUI.easeOut(openT)
+		return (1 - a) * 14, math.max(0.02, a)
 	end
 
 	function APUI.frameHeight()
@@ -602,7 +647,7 @@ do
 	end
 
 	function APUI.helpBlock(id, title, lines, open)
-		local w, h = imgui.GetWindowContentRegionWidth(), APUI.frameHeight()
+		local w, h = imgui.GetContentRegionAvail().x, APUI.frameHeight()
 		local pos = imgui.GetCursorScreenPos()
 		if imgui.InvisibleButton('##help' .. id, V2(math.max(1, w), h)) then open = not open end
 		local hover = APUI.animate('help:' .. id, imgui.IsItemHovered() and 1 or 0, 16)
@@ -734,6 +779,7 @@ function imgui.BeforeDrawFrame()
 			merge.MergeMode = true
 			fonts:AddFontFromFileTTF(iconFont, 18.0, merge, fa_glyph_ranges)
 		end
+		APUI.fontSplash = fonts:AddFontFromFileTTF(file, 46.0, nil, cyrillic)
 	end
 end
 
@@ -1476,7 +1522,7 @@ local V2, V4 = imgui.ImVec2, imgui.ImVec4
 local FULL_W, MINI_W = 440, 380
 local LIST_ROWS = 6
 local apView = {
-	openT = nil, settings = false, eqT = 0, eqBars = nil,
+	openT = nil, settled = false, intro = {}, settings = false, eqT = 0, eqBars = nil,
 	search = { imgui.ImBuffer('', 64), imgui.ImBuffer('', 64) },
 }
 local apNow = { wasLoading = false, error = nil, track = {}, lengthKey = nil, length = nil }
@@ -1961,9 +2007,12 @@ function imgui.OnDrawFrame()
 	if not apWindow.v or not data then
 		apView.openT = nil
 		apView.placed = nil
+		apView.settled = false
+		if not apView.intro.done then apView.intro.t = nil end
 		return
 	end
 	local mini = data.window.mini == true or data.window.mini == 'true'
+	if not mini and APUI.animations and not APUI.drawIntro(apView.intro, 'ap', 'Audio', 'Player') then return end
 	local width = mini and MINI_W or FULL_W
 	local padX, padY = 16, 16
 	if mini then padX, padY = 12, 12 end
@@ -1973,13 +2022,17 @@ function imgui.OnDrawFrame()
 		local x, y = tonumber(data.window[kx]) or -1, tonumber(data.window[ky]) or -1
 		if mini and (x < 0 or y < 0) and apWindowPos then x, y = apWindowPos.x, apWindowPos.y end
 		if x < 0 or y < 0 or x > resX - 60 or y > resY - 60 then x, y = math.floor((resX - width) / 2), math.floor(resY / 5) end
-		imgui.SetNextWindowPos(imgui.ImVec2(x, y), imgui.Cond.Always)
+		apView.placeX, apView.placeY, apView.settled = x, y, false
 		apView.placed = mode
 	end
-	apView.openT = math.min(1, (apView.openT or 0) + imgui.GetIO().DeltaTime / 0.18)
-	local t = 1 - apView.openT
+	apView.openT = math.min(1, (apView.openT or (APUI.animations and 0 or 1)) + imgui.GetIO().DeltaTime / 0.18)
+	local shift, alpha = APUI.appear(apView.openT)
+	if not apView.settled then
+		imgui.SetNextWindowPos(imgui.ImVec2(apView.placeX, apView.placeY + shift), imgui.Cond.Always)
+		apView.settled = apView.openT >= 1
+	end
 	if APUI.fontBase then imgui.PushFont(APUI.fontBase) end
-	imgui.PushStyleVar(imgui.StyleVar.Alpha, math.max(0.02, 1 - t * t * t))
+	imgui.PushStyleVar(imgui.StyleVar.Alpha, alpha)
 	imgui.PushStyleVar(imgui.StyleVar.WindowPadding, imgui.ImVec2(padX, padY))
 	local flags = imgui.WindowFlags.NoResize + imgui.WindowFlags.NoCollapse + imgui.WindowFlags.NoTitleBar
 		+ imgui.WindowFlags.NoScrollbar + imgui.WindowFlags.AlwaysAutoResize
@@ -1988,8 +2041,10 @@ function imgui.OnDrawFrame()
 	end
 	imgui.Begin('##sampaudioplayer', apWindow, flags)
 		imgui.PushStyleVar(imgui.StyleVar.WindowPadding, imgui.ImVec2(12, 12))
-		local pos = imgui.GetWindowPos()
-		apWindowPos = { x = math.floor(pos.x), y = math.floor(pos.y) }
+		if apView.settled then
+			local pos = imgui.GetWindowPos()
+			apWindowPos = { x = math.floor(pos.x), y = math.floor(pos.y) }
+		end
 		if mini then apDrawMini(padX, width) else apDrawFull(padX, width) end
 		imgui.PopStyleVar()
 	imgui.End()

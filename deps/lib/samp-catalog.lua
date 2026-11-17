@@ -1,7 +1,7 @@
 -- samp-catalog: каталог скриптов GORYCH для MoonLoader
 local M = {}
 
-M.VERSION = 3
+M.VERSION = 4
 M.RAW = 'https://raw.githubusercontent.com/egor-pozhitok/samp-scripts/'
 M.REPO = M.RAW .. 'main/'
 M.COMMIT_API = 'https://api.github.com/repos/egor-pozhitok/samp-scripts/commits/main'
@@ -843,9 +843,15 @@ function Catalog:drawCard(entry, width)
 				imgui.PopTextWrapPos()
 			end
 		imgui.EndGroup()
+		local overCard = imgui.IsWindowHovered()
 	imgui.EndChild()
 	imgui.PopStyleVar()
 	imgui.PopStyleColor()
+	local wheel = overCard and tonumber(imgui.GetIO().MouseWheel) or 0
+	if wheel ~= 0 then
+		local maxY = tonumber(imgui.GetScrollMaxY()) or 0
+		imgui.SetScrollY(math.max(0, math.min(maxY, imgui.GetScrollY() - wheel * 5 * imgui.GetFontSize())))
+	end
 end
 
 function Catalog:currentTab(tabs)

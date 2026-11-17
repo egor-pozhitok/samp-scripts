@@ -8,12 +8,12 @@
       "id": "audio-player",
       "name": "Аудиоплеер",
       "description": "Радио и музыка из папки на компьютере: «Сейчас играет», поиск, избранные станции, мини-плеер поверх игры, каталог скриптов. Станция подключается в фоне, игра не замирает. Окно: /aplayer или F12.",
-      "version": "1.6",
-      "version_num": 7,
+      "version": "1.7",
+      "version_num": 8,
       "image": "images/audio-player.png",
       "main": "samp-audio-player.lua",
       "files": [
-        { "path": "samp-audio-player.lua", "size": 71221, "src": "scripts/audio-player/samp-audio-player.lua" }
+        { "path": "samp-audio-player.lua", "size": 73794, "src": "scripts/audio-player/samp-audio-player.lua" }
       ],
       "deps": [
         { "path": "lib/imgui.lua", "size": 114068, "src": "deps/lib/imgui.lua" },
@@ -34,7 +34,7 @@
         { "path": "lib/samp/events/handlers.lua", "size": 17405, "src": "deps/lib/samp/events/handlers.lua" },
         { "path": "lib/samp/events/utils.lua", "size": 1385, "src": "deps/lib/samp/events/utils.lua" },
         { "path": "resource/fonts/fa-solid-900.ttf", "size": 202744, "src": "deps/resource/fonts/fa-solid-900.ttf" },
-        { "path": "lib/samp-catalog.lua", "size": 32524, "src": "deps/lib/samp-catalog.lua" },
+        { "path": "lib/samp-catalog.lua", "size": 32814, "src": "deps/lib/samp-catalog.lua" },
         { "path": "lib/samp-toast.lua", "size": 1407, "src": "deps/lib/samp-toast.lua" },
         { "path": "samp-notifier.lua", "size": 6116, "src": "deps/samp-notifier.lua" }
       ]
@@ -43,8 +43,8 @@
       "id": "snhelper",
       "name": "SNHelper",
       "description": "Помощник для работы в эфире на сервере Galaxy: мероприятия, правила, счётчики, подсказки.",
-      "version": "2.0",
-      "version_num": 5,
+      "version": "2.1",
+      "version_num": 6,
       "server": "galaxy",
       "removable": false,
       "image": "images/snhelper.png",
@@ -52,23 +52,23 @@
       "main": "SNHelper.lua",
       "also": ["SNHelper.luac"],
       "files": [
-        { "path": "SNHelper.lua", "size": 672480, "src": "scripts/snhelper/SNHelper.lua" }
+        { "path": "SNHelper.lua", "size": 672334, "src": "scripts/snhelper/SNHelper.lua" }
       ],
       "deps": []
     },
     {
       "id": "fishing",
-      "name": "Рыбалка",
-      "description": "Помощник для рыбалки: подсекает по звонку колокольчика и снова забрасывает, продаёт улов, выбрасывает мелкую рыбу. Уведомления и команды через своего бота в Telegram. Окно: /fishing.",
-      "version": "2.0",
-      "version_num": 1,
+      "name": "FisherMan",
+      "description": "Помощник для рыбалки: подсекает по звонку колокольчика и снова забрасывает, продаёт улов, выбрасывает мелкую рыбу. Уведомления и команды через своего бота в Telegram. Окно: /fishing или /fisherman.",
+      "version": "2.1",
+      "version_num": 2,
       "server": "galaxy",
       "image": "images/fishing.png",
       "bug_report": "https://forms.gle/jWurzWd6DD8thJ8Y9",
       "main": "samp-fishing.lua",
       "also": ["Fishing.lua"],
       "files": [
-        { "path": "samp-fishing.lua", "size": 285806, "src": "scripts/fishing/samp-fishing.lua" }
+        { "path": "samp-fishing.lua", "size": 304032, "src": "scripts/fishing/samp-fishing.lua" }
       ],
       "deps": [
         { "path": "lib/imgui.lua", "size": 114068, "src": "deps/lib/imgui.lua" },
@@ -88,24 +88,24 @@
         { "path": "lib/samp/events/handlers.lua", "size": 17405, "src": "deps/lib/samp/events/handlers.lua" },
         { "path": "lib/samp/events/utils.lua", "size": 1385, "src": "deps/lib/samp/events/utils.lua" },
         { "path": "resource/fonts/fa-solid-900.ttf", "size": 202744, "src": "deps/resource/fonts/fa-solid-900.ttf" },
-        { "path": "lib/samp-catalog.lua", "size": 32524, "src": "deps/lib/samp-catalog.lua" },
+        { "path": "lib/samp-catalog.lua", "size": 32814, "src": "deps/lib/samp-catalog.lua" },
         { "path": "lib/samp-toast.lua", "size": 1407, "src": "deps/lib/samp-toast.lua" },
         { "path": "samp-notifier.lua", "size": 6116, "src": "deps/samp-notifier.lua" }
       ]
     },
     {
       "id": "graffiti",
-      "name": "Граффити",
-      "description": "Граффити банд на экране: название, расстояние и линия к ним, выбор банд. Закрашивание по клавише B со скриншотом. Окно: /graffiti.",
-      "version": "3.0",
-      "version_num": 1,
+      "name": "SprayKing",
+      "description": "Граффити банд на экране: название, расстояние и линия к ним, выбор банд. Закрашивание по клавише B со скриншотом. Окно: /graffiti или /sprayking.",
+      "version": "3.1",
+      "version_num": 2,
       "server": "galaxy",
       "image": "images/graffiti.png",
       "bug_report": "https://forms.gle/qn4g7zUNgW9ffhZZ6",
       "main": "samp-graffiti.lua",
       "also": ["graffiti_nontp.lua"],
       "files": [
-        { "path": "samp-graffiti.lua", "size": 209131, "src": "scripts/graffiti/samp-graffiti.lua" }
+        { "path": "samp-graffiti.lua", "size": 223526, "src": "scripts/graffiti/samp-graffiti.lua" }
       ],
       "deps": [
         { "path": "lib/imgui.lua", "size": 114068, "src": "deps/lib/imgui.lua" },
@@ -125,7 +125,45 @@
         { "path": "lib/samp/events/handlers.lua", "size": 17405, "src": "deps/lib/samp/events/handlers.lua" },
         { "path": "lib/samp/events/utils.lua", "size": 1385, "src": "deps/lib/samp/events/utils.lua" },
         { "path": "resource/fonts/fa-solid-900.ttf", "size": 202744, "src": "deps/resource/fonts/fa-solid-900.ttf" },
-        { "path": "lib/samp-catalog.lua", "size": 32524, "src": "deps/lib/samp-catalog.lua" },
+        { "path": "lib/samp-catalog.lua", "size": 32814, "src": "deps/lib/samp-catalog.lua" },
+        { "path": "lib/samp-toast.lua", "size": 1407, "src": "deps/lib/samp-toast.lua" },
+        { "path": "samp-notifier.lua", "size": 6116, "src": "deps/samp-notifier.lua" }
+      ]
+    },
+    {
+      "id": "lawguard",
+      "name": "LawGuard",
+      "description": "Помощник полицейского: обыск и наручники по клавише, отчёт об обыске, подсказки о звёздах, розыск и грабители банков на экране, автопокупка оружия. Окно: /lawguard.",
+      "version": "2.0",
+      "version_num": 1,
+      "server": "galaxy",
+      "image": "images/lawguard.png",
+      "bug_report": "https://forms.gle/qFUkNf1nuJ6UKnAJ8",
+      "main": "samp-lawguard.lua",
+      "also": ["ForCops.luac", "ForCops.lua"],
+      "files": [
+        { "path": "samp-lawguard.lua", "size": 509148, "src": "scripts/lawguard/samp-lawguard.lua" }
+      ],
+      "deps": [
+        { "path": "lib/imgui.lua", "size": 114068, "src": "deps/lib/imgui.lua" },
+        { "path": "lib/MoonImGui.dll", "size": 3346432, "src": "deps/lib/MoonImGui.dll" },
+        { "path": "lib/bitex.lua", "size": 557, "src": "deps/lib/bitex.lua" },
+        { "path": "lib/windows/init.lua", "size": 184, "src": "deps/lib/windows/init.lua" },
+        { "path": "lib/windows/message.lua", "size": 26909, "src": "deps/lib/windows/message.lua" },
+        { "path": "lib/fAwesome5.lua", "size": 41642, "src": "deps/lib/fAwesome5.lua" },
+        { "path": "lib/encoding.lua", "size": 2636, "src": "deps/lib/encoding.lua" },
+        { "path": "lib/iconv.dll", "size": 1000960, "src": "deps/lib/iconv.dll" },
+        { "path": "lib/lfs.dll", "size": 126976, "src": "deps/lib/lfs.dll" },
+        { "path": "lib/samp/events.lua", "size": 26829, "src": "deps/lib/samp/events.lua" },
+        { "path": "lib/samp/raknet.lua", "size": 12181, "src": "deps/lib/samp/raknet.lua" },
+        { "path": "lib/samp/synchronization.lua", "size": 4296, "src": "deps/lib/samp/synchronization.lua" },
+        { "path": "lib/samp/events/bitstream_io.lua", "size": 7155, "src": "deps/lib/samp/events/bitstream_io.lua" },
+        { "path": "lib/samp/events/core.lua", "size": 3880, "src": "deps/lib/samp/events/core.lua" },
+        { "path": "lib/samp/events/extra_types.lua", "size": 1573, "src": "deps/lib/samp/events/extra_types.lua" },
+        { "path": "lib/samp/events/handlers.lua", "size": 17405, "src": "deps/lib/samp/events/handlers.lua" },
+        { "path": "lib/samp/events/utils.lua", "size": 1385, "src": "deps/lib/samp/events/utils.lua" },
+        { "path": "resource/fonts/fa-solid-900.ttf", "size": 202744, "src": "deps/resource/fonts/fa-solid-900.ttf" },
+        { "path": "lib/samp-catalog.lua", "size": 32814, "src": "deps/lib/samp-catalog.lua" },
         { "path": "lib/samp-toast.lua", "size": 1407, "src": "deps/lib/samp-toast.lua" },
         { "path": "samp-notifier.lua", "size": 6116, "src": "deps/samp-notifier.lua" }
       ]
