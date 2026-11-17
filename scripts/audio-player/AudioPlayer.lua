@@ -147,14 +147,37 @@ end
 
 if APBOOT_TEST then return APBoot end
 
-script_name('samp-audio-player')
+script_name('AudioPlayer')
 script_author('GORYCH')
 script_description('Music player: radio stations and tracks from a folder')
-script_version_number(9)
-script_version('1.8')
+script_version_number(10)
+script_version('1.9')
+
+APBoot.FILE = 'AudioPlayer.lua'
+APBoot.OLD_FILES = { 'samp-audio-player.lua' }
+function APBoot.renameSelf()
+	local me = thisScript()
+	local path = tostring(me.path or '')
+	local dir, file = path:match('^(.*[\\/])([^\\/]+)$')
+	if not file then return false end
+	local old = false
+	for _, n in ipairs(APBoot.OLD_FILES) do
+		if file:lower() == n:lower() then old = true end
+	end
+	if not old then return false end
+	local target = dir .. APBoot.FILE
+	if doesFileExist(target) or os.rename(path, target) ~= true then return false end
+	local ok, loaded = pcall(script.load, target)
+	if not ok or not loaded then
+		os.rename(target, path)
+		return false
+	end
+	me:unload()
+	return true
+end
 
 function APBoot.statePath()
-	return getWorkingDirectory() .. '\\config\\samp-audio-player\\bootstrap.state'
+	return getWorkingDirectory() .. '\\config\\AudioPlayer\\bootstrap.state'
 end
 
 function APBoot.ensureDir(filePath)
@@ -250,7 +273,10 @@ do
 	end)
 	local used = APBoot.attemptsUsed(APBoot.readState(APBoot.statePath()), os.time())
 	if APBoot.shouldRun(problems, used) then
-		function main() APBoot.run(problems) end
+		function main()
+			if APBoot.renameSelf() then return end
+			APBoot.run(problems)
+		end
 		return
 	end
 	if #problems == 0 then os.remove(APBoot.statePath()) end
@@ -784,7 +810,7 @@ function imgui.BeforeDrawFrame()
 end
 
 local resX, resY = getScreenResolution()
-local cfgpath = 'samp-audio-player'
+local cfgpath = 'AudioPlayer'
 local data = nil
 local DEFAULT_KEY = 0x7B
 local apWindow = imgui.ImBool(false)
@@ -1375,7 +1401,14 @@ function onScriptTerminate(script, quitGame)
 end
 
 function main()
+	if APBoot.renameSelf() then return end
 	while not isSampAvailable() do wait(100) end
+	do
+		local dir = getWorkingDirectory() .. '\\config\\'
+		if doesFileExist(dir .. 'samp-audio-player.ini') and not doesFileExist(dir .. 'AudioPlayer.ini') then
+			os.rename(dir .. 'samp-audio-player.ini', dir .. 'AudioPlayer.ini')
+		end
+	end
 	data = inicfg.load({
 		music = {
 			path = 'C:\\Users\\User\\Music',
@@ -1472,7 +1505,7 @@ do
 				selfName = 'плеер',
 				chatPrefix = 'Audio Player',
 				tag = '[AudioPlayer]',
-				dataDir = 'config/samp-audio-player',
+				dataDir = 'config/AudioPlayer',
 				idPrefix = 'apCat',
 				imageSize = 44,
 				cardPad = 10,
