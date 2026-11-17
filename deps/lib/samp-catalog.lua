@@ -186,7 +186,6 @@ end
 function M.action(entry, installed, blocked)
 	if installed == nil then return 'install' end
 	if entry.version_num > installed and not (blocked and entry.version_num <= blocked) then return 'update' end
-	if entry.version_num > installed then return 'blocked' end
 	if entry.removable == false then return 'installed' end
 	return 'remove'
 end
@@ -261,11 +260,10 @@ end
 
 function M.helpLines(selfName, extra)
 	local lines = {
-		'Здесь скрипты от GORYCH. Список загружается из интернета при первом открытии раздела, «Обновить список» загружает его заново.',
-		'«Установить» скачивает файлы скрипта в папку moonloader и сразу запускает его. Общие библиотеки (imgui, шрифт значков и другие), которых нет, скачиваются вместе с ним.',
-		'«Обновить» появляется, когда вышла новая версия: она скачивается и проверяется, прежний файл остаётся рядом с расширением .bak, скрипт перезапускается.'
-			.. (selfName and (' Так же обновляется и сам ' .. selfName .. ' (карточка «этот скрипт»).') or ''),
-		'«Удалить» (нажмите два раза) останавливает скрипт и удаляет его файлы. Общие библиотеки остаются: ими пользуются другие скрипты.',
+		'Здесь скрипты от GORYCH: их можно установить, обновить и удалить.',
+		'«Установить» скачивает скрипт и сразу запускает его.',
+		'«Обновить» появляется, когда вышла новая версия.',
+		'«Удалить» (нажмите два раза) удаляет скрипт.',
 	}
 	for _, line in ipairs(extra or {}) do lines[#lines + 1] = line end
 	for i, line in ipairs(lines) do lines[i] = i .. '. ' .. line end
@@ -397,6 +395,7 @@ end
 
 M.BLOCK_FILE = 'config/SNHelper/catalog.blocked'
 M.SETTLE_SEC = 15
+M.STALE_SEC = 600
 
 local function blockPath()
 	return full(M.BLOCK_FILE)
@@ -535,12 +534,13 @@ function Catalog:fetch(event)
 		if ok and list then
 			self.list, self.skipped, self.err = list, extra or 0, nil
 			self.servers = self.pendingServers or {}
+			self.loadedAt = os.clock()
 			self.status = M.nextStatus(self.status, 'loaded', #list)
 			self:refreshInstalled()
 			local okImg, errImg = pcall(self.fetchImages, self)
 			if not okImg then self:log(errImg) end
 		else
-			if not ok then self:log(list) end
+			if not ok then self:log(list) else self:log('list: ' .. tostring(extra)) end
 			self.err = ok and extra or 'ошибка скрипта'
 			self.status = M.nextStatus(self.status, 'failed')
 		end
@@ -614,7 +614,7 @@ function Catalog:isBlocked(entry)
 end
 
 function Catalog:install(entry)
-	if self:isBlocked(entry) then return false, 'эта версия уже не запустилась, ждите следующую' end
+	if self:isBlocked(entry) then return false, 'version ' .. entry.version_num .. ' is blocked (did not start before)' end
 	local ok, target = self:fetchFiles(entry)
 	if not ok then return false, target end
 	self:setState(entry.id, entry.version_num)
@@ -633,7 +633,7 @@ function Catalog:install(entry)
 end
 
 function Catalog:updateSelf(entry)
-	if self:isBlocked(entry) then return false, 'эта версия уже не запустилась, ждите следующую' end
+	if self:isBlocked(entry) then return false, 'version ' .. entry.version_num .. ' is blocked (did not start before)' end
 	local ok, err = self:fetchFiles(entry)
 	if not ok then return false, err end
 	self:setState(entry.id, entry.version_num)
@@ -690,7 +690,8 @@ function Catalog:run(entry, kind)
 			local ok, done, extra = pcall(self.updateSelf, self, entry)
 			if not ok then self:log(done) end
 			if not (ok and done) then
-				notify('Не удалось обновить ' .. self.opts.selfName .. ':\n' .. tostring(ok and extra or 'ошибка скрипта') .. '.\nПрежняя версия осталась.', 6, 'error')
+				if ok then self:log(entry.id .. ': ' .. tostring(extra)) end
+				notify('Не удалось обновить ' .. self.opts.selfName .. '.\nПопробуйте позже.', 6, 'error')
 			end
 		else
 			local wasInstalled = self.installed[entry.id] ~= nil
@@ -703,7 +704,8 @@ function Catalog:run(entry, kind)
 					notify('Скрипт ' .. name .. ' установлен, но не запустился.\nПерезапустите игру.', 6, 'error')
 				end
 			else
-				notify('Не удалось ' .. (wasInstalled and 'обновить ' or 'установить ') .. name .. ':\n' .. tostring(ok and extra or 'ошибка скрипта') .. '.' .. (wasInstalled and '\nПрежняя версия осталась.' or '\nПопробуйте позже.'), 6, 'error')
+				if ok then self:log(entry.id .. ': ' .. tostring(extra)) end
+				notify('Не удалось ' .. (wasInstalled and 'обновить ' or 'установить ') .. name .. '.\nПроверьте интернет и попробуйте позже.', 6, 'error')
 			end
 		end
 		self:refreshInstalled()
@@ -773,8 +775,6 @@ function Catalog:drawCard(entry, width)
 		label = u8('этот скрипт')
 	elseif action == 'installed' then
 		label = u8('установлен')
-	elseif action == 'blocked' then
-		label = u8('версия ') .. entry.version .. u8(' не запустилась')
 	elseif action == 'update' and armed then
 		label = fa.ICON_FA_SYNC .. u8(' Ещё раз')
 	elseif action == 'install' then
@@ -785,7 +785,7 @@ function Catalog:drawCard(entry, width)
 		label = fa.ICON_FA_TRASH .. u8(' Удалить')
 	end
 	local buttonWidth
-	if (action == 'self' or action == 'installed' or action == 'blocked') and not mine then
+	if (action == 'self' or action == 'installed') and not mine then
 		buttonWidth = imgui.CalcTextSize(label).x
 	elseif action == 'remove' and not mine then
 		buttonWidth = ui.dangerButtonWidth(label)
@@ -823,7 +823,7 @@ function Catalog:drawCard(entry, width)
 					ui.button(label .. '##' .. id .. 'Busy' .. entry.id, nil, V2(buttonWidth, 0))
 				elseif action == 'self' then
 					ui.label(label, C.accent)
-				elseif action == 'installed' or action == 'blocked' then
+				elseif action == 'installed' then
 					ui.label(label, C.muted)
 				elseif action == 'remove' then
 					if ui.dangerButton(id .. entry.id, label, V2(buttonWidth, 0)) then self:run(entry, 'remove') end
@@ -924,7 +924,10 @@ function Catalog:drawBody(inner)
 	end
 	if status == 'error' then
 		imgui.PushTextWrapPos(0)
-		imgui.TextColored(C.danger, u8('Не удалось загрузить список: ' .. tostring(self.err) .. '.'))
+		local text = self.err == 'формат каталога не поддерживается'
+			and ('Список не открывается в этой версии. Обновите ' .. (self.opts.selfName or 'скрипт') .. '.')
+			or 'Не удалось загрузить список. Проверьте интернет и нажмите «Повторить».'
+		imgui.TextColored(C.danger, u8(text))
 		imgui.PopTextWrapPos()
 		if ui.button(fa.ICON_FA_REDO .. u8(' Повторить') .. '##' .. id .. 'Retry', 'primary') then self:fetch('refresh') end
 	elseif status == 'empty' then
@@ -935,7 +938,7 @@ function Catalog:drawBody(inner)
 	end
 	if (status == 'ready' or status == 'empty') and self.skipped > 0 then
 		imgui.PushTextWrapPos(0)
-		imgui.TextDisabled(u8('Пропущено записей с ошибкой: ' .. self.skipped .. '. Обновите ' .. (self.opts.selfName or 'скрипт') .. '.'))
+		imgui.TextDisabled(u8('Некоторые скрипты не показаны: обновите ' .. (self.opts.selfName or 'скрипт') .. '.'))
 		imgui.PopTextWrapPos()
 	end
 end
@@ -944,6 +947,12 @@ function Catalog:draw(width, height)
 	local imgui = self:libs()
 	local V2 = imgui.ImVec2
 	if self.status == 'idle' then self:fetch('open') end
+	local now = os.clock()
+	if self.status == 'ready' and not self.busy and self.lastDraw and now - self.lastDraw > 1
+		and now - (self.loadedAt or now) > M.STALE_SEC then
+		self:fetch('refresh')
+	end
+	self.lastDraw = now
 	if self.status == 'ready' and not self.busy and os.clock() - self.checkedAt > 2 then self:refreshInstalled() end
 	if not height then
 		self:drawBody(width or imgui.GetContentRegionAvailWidth())

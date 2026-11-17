@@ -27,7 +27,7 @@ APBoot.DEPS = {
 	{ path = 'resource/fonts/fa-solid-900.ttf', size = 202744 },
 }
 
-APBoot.CATALOG_DEP = { path = 'lib/samp-catalog.lua', size = 32695, module = 'samp-catalog', optional = true, minVersion = 3 }
+APBoot.CATALOG_DEP = { path = 'lib/samp-catalog.lua', size = 32524, module = 'samp-catalog', optional = true, minVersion = 3 }
 table.insert(APBoot.DEPS, APBoot.CATALOG_DEP)
 
 APBoot.TOAST_DEP = { path = 'lib/samp-toast.lua', size = 1407, module = 'samp-toast', optional = true, minVersion = 1 }
@@ -1450,8 +1450,8 @@ do
 		imgui.BeginChild('apcatalog', V2(width, height), false, imgui.WindowFlags.AlwaysUseWindowPadding)
 			APUI.label(u8'Скрипты от GORYCH', C.muted)
 			imgui.PushTextWrapPos(0)
-			imgui.TextColored(C.danger, u8('Каталог не загружен: нет файла moonloader/' .. APBoot.CATALOG_DEP.path .. ' или он устарел.'))
-			imgui.TextColored(C.muted, u8'Плеер скачает его и перезапустится. Нужен интернет.')
+			imgui.TextColored(C.danger, u8'Каталог не загрузился.')
+			imgui.TextColored(C.muted, u8'Нажмите «Загрузить» (нужен интернет).')
 			imgui.PopTextWrapPos()
 			if APUI.button(fa.ICON_FA_DOWNLOAD .. u8' Загрузить##apCatLib', 'primary') then
 				os.remove(APBoot.statePath())

@@ -13,7 +13,7 @@
       "image": "images/audio-player.png",
       "main": "samp-audio-player.lua",
       "files": [
-        { "path": "samp-audio-player.lua", "size": 71306, "src": "scripts/audio-player/samp-audio-player.lua" }
+        { "path": "samp-audio-player.lua", "size": 71221, "src": "scripts/audio-player/samp-audio-player.lua" }
       ],
       "deps": [
         { "path": "lib/imgui.lua", "size": 114068, "src": "deps/lib/imgui.lua" },
@@ -34,7 +34,7 @@
         { "path": "lib/samp/events/handlers.lua", "size": 17405, "src": "deps/lib/samp/events/handlers.lua" },
         { "path": "lib/samp/events/utils.lua", "size": 1385, "src": "deps/lib/samp/events/utils.lua" },
         { "path": "resource/fonts/fa-solid-900.ttf", "size": 202744, "src": "deps/resource/fonts/fa-solid-900.ttf" },
-        { "path": "lib/samp-catalog.lua", "size": 32695, "src": "deps/lib/samp-catalog.lua" },
+        { "path": "lib/samp-catalog.lua", "size": 32524, "src": "deps/lib/samp-catalog.lua" },
         { "path": "lib/samp-toast.lua", "size": 1407, "src": "deps/lib/samp-toast.lua" },
         { "path": "samp-notifier.lua", "size": 6116, "src": "deps/samp-notifier.lua" }
       ]
@@ -42,7 +42,7 @@
     {
       "id": "snhelper",
       "name": "SNHelper",
-      "description": "Помощник для работы в эфире на сервере Galaxy: мероприятия, правила, счётчики, подсказки. Обновляется из каталога и сам при запуске.",
+      "description": "Помощник для работы в эфире на сервере Galaxy: мероприятия, правила, счётчики, подсказки.",
       "version": "1.1",
       "version_num": 3,
       "server": "galaxy",
