@@ -60,15 +60,15 @@
       "id": "fishing",
       "name": "FisherMan",
       "description": "Помощник для рыбалки: подсекает по звонку колокольчика и снова забрасывает, продаёт улов, выбрасывает мелкую рыбу. Уведомления и команды через своего бота в Telegram. Окно: /fishing или /fisherman.",
-      "version": "2.1",
-      "version_num": 2,
+      "version": "2.2",
+      "version_num": 3,
       "server": "galaxy",
       "image": "images/fishing.png",
       "bug_report": "https://forms.gle/jWurzWd6DD8thJ8Y9",
       "main": "samp-fishing.lua",
       "also": ["Fishing.lua"],
       "files": [
-        { "path": "samp-fishing.lua", "size": 304032, "src": "scripts/fishing/samp-fishing.lua" }
+        { "path": "samp-fishing.lua", "size": 298615, "src": "scripts/fishing/samp-fishing.lua" }
       ],
       "deps": [
         { "path": "lib/imgui.lua", "size": 114068, "src": "deps/lib/imgui.lua" },
