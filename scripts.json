@@ -179,14 +179,14 @@
       "id": "smartdialog",
       "name": "SmartDialog",
       "description": "Диалоги сервера и таблица игроков (Tab) в окне в стиле скриптов GORYCH: цвета, табуляция как в SA-MP, длинные списки с прокруткой, Enter / Esc и стрелки; в Tab - поиск, сортировка, свой ник сверху. Другие скрипты видят диалог как обычно. Настройки: /smartdialog.",
-      "version": "1.5",
-      "version_num": 6,
+      "version": "1.6",
+      "version_num": 7,
       "image": "images/smartdialog.png",
       "image_size": 3513,
       "main": "SmartDialog.lua",
       "also": ["samp-smartdialog.lua"],
       "files": [
-        { "path": "SmartDialog.lua", "size": 366159, "src": "scripts/smartdialog/SmartDialog.lua" }
+        { "path": "SmartDialog.lua", "size": 372811, "src": "scripts/smartdialog/SmartDialog.lua" }
       ],
       "deps": [
         { "path": "lib/imgui.lua", "size": 114068, "src": "deps/lib/imgui.lua" },
